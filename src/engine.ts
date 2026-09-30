@@ -1,0 +1,236 @@
+import { useStore } from './store'
+import type { Clip, Media } from './types'
+import { placement, clipAlpha, clipGain, sourceTime, hasColor, colorParams, sequenceEnd } from '../shared/math.js'
+
+type VEl = { el: HTMLVideoElement; lastSeek: number; gain?: GainNode; src: string }
+
+/** Real-time preview: one <video> per active clip, composited on a canvas; audio via WebAudio gain per clip. */
+export class Engine {
+  canvas: HTMLCanvasElement | null = null
+  ctx2d: CanvasRenderingContext2D | null = null
+  els = new Map<string, VEl>()
+  audio: AudioContext | null = null
+  playing = false
+  dir = 1
+  t0 = 0
+  tl0 = 0
+  dirty = true
+  raf = 0
+  stats = { fps: 0, late: 0, frames: 0, dropped: 0, decoded: 0, worst: 0 }
+  private last = 0
+  private lastPh = -1
+  private droppedBase = 0
+  private decodedBase = 0
+  private frameCount = 0
+  private fpsT = 0
+  private loop = (now: number) => {
+    this.raf = requestAnimationFrame(this.loop)
+    this.tick(now)
+  }
+
+  attach(canvas: HTMLCanvasElement) {
+    this.canvas = canvas
+    this.ctx2d = canvas.getContext('2d', { alpha: false })
+    if (!this.raf) this.raf = requestAnimationFrame(this.loop)
+  }
+
+  mediaSrc(m: Media) {
+    return window.api.mediaUrl(m.proxy || m.path)
+  }
+
+  play(dir = 1) {
+    const s = useStore.getState()
+    const end = sequenceEnd(s.clips)
+    if (!s.clips.length) return
+    if (dir > 0 && s.playhead >= end - 1e-3) s.setPlayhead(0)
+    if (dir < 0 && s.playhead <= 0) return
+    if (!this.audio) this.audio = new AudioContext()
+    this.audio.resume()
+    this.dir = dir
+    this.playing = true
+    this.t0 = performance.now()
+    this.tl0 = useStore.getState().playhead
+    this.stats = { fps: 0, late: 0, frames: 0, dropped: 0, decoded: 0, worst: 0 }
+    this.droppedBase = this.decodedBase = 0
+    this.last = 0
+    useStore.setState({ playing: true })
+  }
+
+  pause() {
+    if (!this.playing) return
+    this.playing = false
+    for (const v of this.els.values()) v.el.pause()
+    useStore.setState({ playing: false })
+    this.dirty = true
+  }
+
+  toggle() { this.playing ? this.pause() : this.play(1) }
+
+  seek(t: number) {
+    useStore.getState().setPlayhead(t)
+    if (this.playing) { this.t0 = performance.now(); this.tl0 = useStore.getState().playhead }
+    this.dirty = true
+  }
+
+  /** Called by UI when clips change while paused. */
+  invalidate() { this.dirty = true }
+
+  private release(id: string) {
+    const v = this.els.get(id)
+    if (!v) return
+    const q = v.el.getVideoPlaybackQuality?.()
+    if (q) { this.droppedBase += q.droppedVideoFrames; this.decodedBase += q.totalVideoFrames }
+    v.el.pause(); v.el.removeAttribute('src'); v.el.load()
+    v.gain?.disconnect()
+    this.els.delete(id)
+  }
+
+  private ensure(c: Clip, m: Media, t: number): VEl {
+    let v = this.els.get(c.id)
+    const src = this.mediaSrc(m)
+    if (v && v.src !== src) { this.release(c.id); v = undefined }
+    if (v) return v
+    const el = document.createElement('video')
+    el.preload = 'auto'
+    el.crossOrigin = 'anonymous'
+    el.muted = c.kind === 'video'
+    el.playsInline = true
+    el.src = src
+    el.addEventListener('seeked', () => (this.dirty = true))
+    el.addEventListener('loadeddata', () => (this.dirty = true))
+    el.addEventListener('error', () => {
+      const cur = useStore.getState().media[m.id]
+      if (cur && !cur.proxy && !cur.proxyBusy) {
+        useStore.getState().setStatus(`Cannot decode ${cur.name} directly - building a proxy…`)
+        makeProxy(cur.id)
+      }
+    })
+    const cl = Math.min(Math.max(t, c.start), c.start + c.dur)
+    el.currentTime = sourceTime(c, cl)
+    v = { el, lastSeek: el.currentTime, src }
+    if (c.kind === 'audio') {
+      if (!this.audio) this.audio = new AudioContext()
+      const node = this.audio.createMediaElementSource(el)
+      const gain = this.audio.createGain()
+      node.connect(gain).connect(this.audio.destination)
+      v.gain = gain
+    }
+    this.els.set(c.id, v)
+    return v
+  }
+
+  private tick(now: number) {
+    const s = useStore.getState()
+    if (this.playing) {
+      if (this.last) {
+        const dt = now - this.last
+        this.stats.frames++
+        if (dt > 25) this.stats.late++
+        if (dt > this.stats.worst) this.stats.worst = dt
+      }
+      this.last = now
+      this.frameCount++
+      if (now - this.fpsT > 500) { this.stats.fps = (this.frameCount * 1000) / (now - this.fpsT); this.frameCount = 0; this.fpsT = now }
+      const end = sequenceEnd(s.clips)
+      let t = this.tl0 + ((now - this.t0) / 1000) * this.dir
+      if (t >= end && this.dir > 0) { t = end; s.setPlayhead(t); this.pause(); this.dirty = true; return }
+      if (t <= 0 && this.dir < 0) { t = 0; s.setPlayhead(t); this.pause(); this.dirty = true; return }
+      s.setPlayhead(t)
+      this.sync(t, this.dir > 0)
+      this.draw(t)
+      let d = this.droppedBase, dec = this.decodedBase
+      for (const v of this.els.values()) { const q = v.el.getVideoPlaybackQuality?.(); if (q) { d += q.droppedVideoFrames; dec += q.totalVideoFrames } }
+      this.stats.dropped = d; this.stats.decoded = dec
+    } else if (this.dirty || s.playhead !== this.lastPh) {
+      this.dirty = false
+      this.sync(s.playhead, false)
+      this.draw(s.playhead)
+    }
+    this.lastPh = s.playhead
+  }
+
+  private sync(t: number, playing: boolean) {
+    const s = useStore.getState()
+    const need = new Set<string>()
+    for (const c of s.clips) {
+      if (c.kind === 'title' || !c.mediaId) continue
+      const m = s.media[c.mediaId]; if (!m) continue
+      const tr = s.tracks.find((x) => x.id === c.trackId)
+      const near = t >= c.start - 2 && t <= c.start + c.dur + 0.3
+      if (!near) continue
+      need.add(c.id)
+      const v = this.ensure(c, m, t)
+      const active = t >= c.start && t < c.start + c.dur
+      const target = sourceTime(c, t)
+      if (!active) {
+        v.el.pause()
+        if (t < c.start && Math.abs(v.lastSeek - c.in) > 0.05 && !v.el.seeking) { v.el.currentTime = c.in; v.lastSeek = c.in }
+        if (v.gain) v.gain.gain.value = 0
+        continue
+      }
+      if (v.gain) {
+        v.gain.gain.setTargetAtTime(tr?.muted ? 0 : clipGain(c, t - c.start), this.audio!.currentTime, 0.01)
+      }
+      if (playing) {
+        if (v.el.playbackRate !== c.speed) v.el.playbackRate = c.speed
+        if (v.el.paused) {
+          if (Math.abs(v.el.currentTime - target) > 0.04) { v.el.currentTime = target; v.lastSeek = target }
+          v.el.play().catch(() => {})
+        } else if (Math.abs(v.el.currentTime - target) > 0.3 && !v.el.seeking) {
+          v.el.currentTime = target; v.lastSeek = target
+        }
+      } else {
+        if (!v.el.paused) v.el.pause()
+        if (Math.abs(v.lastSeek - target) > 0.5 / s.fps) { v.el.currentTime = target; v.lastSeek = target }
+      }
+    }
+    for (const id of [...this.els.keys()]) if (!need.has(id)) this.release(id)
+  }
+
+  draw(t: number) {
+    const s = useStore.getState()
+    const cv = this.canvas, g = this.ctx2d
+    if (!cv || !g) return
+    if (cv.width !== s.width || cv.height !== s.height) { cv.width = s.width; cv.height = s.height }
+    g.filter = 'none'; g.globalAlpha = 1
+    g.fillStyle = '#000'; g.fillRect(0, 0, cv.width, cv.height)
+    const order = new Map(s.tracks.map((tr, i) => [tr.id, i]))
+    const vis = s.clips
+      .filter((c) => c.kind !== 'audio' && t >= c.start && t < c.start + c.dur && !s.tracks.find((x) => x.id === c.trackId)?.hidden)
+      .sort((a, b) => (order.get(a.trackId)! - order.get(b.trackId)!) || a.start - b.start)
+    for (const c of vis) {
+      if (c.kind === 'title') { this.drawTitle(g, c, s.width, s.height); continue }
+      const m = s.media[c.mediaId!]; const v = this.els.get(c.id)
+      if (!m || !v || v.el.readyState < 2) continue
+      const p = placement(c, m.w, m.h, s.width, s.height)
+      const rx = v.el.videoWidth / m.w, ry = v.el.videoHeight / m.h
+      g.globalAlpha = clipAlpha(c, t - c.start)
+      if (hasColor(c)) { const q = colorParams(c); g.filter = `brightness(${q.b}) contrast(${q.c}) saturate(${q.s})` }
+      g.drawImage(v.el, p.sx * rx, p.sy * ry, p.sw * rx, p.sh * ry, p.dx, p.dy, p.dw, p.dh)
+      g.filter = 'none'; g.globalAlpha = 1
+    }
+  }
+
+  private drawTitle(g: CanvasRenderingContext2D, c: Clip, W: number, H: number) {
+    const lines = (c.text || '').split('\n'); const size = Math.round(c.size || 64)
+    g.font = `${size}px "${c.font || 'Arial'}"`; g.fillStyle = c.color || '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle'
+    const lh = size * 1.2, y0 = (c.y ?? 0.5) * H - ((lines.length - 1) * lh) / 2
+    lines.forEach((l, i) => g.fillText(l, Math.round((c.x ?? 0.5) * W), y0 + i * lh))
+  }
+}
+
+export const engine = new Engine()
+
+export async function makeProxy(id: string) {
+  const st = useStore.getState()
+  const m = st.media[id]; if (!m || m.proxy || m.proxyBusy) return
+  st.patchMedia(id, { proxyBusy: true })
+  try {
+    const p = await window.api.proxy(m.path)
+    useStore.getState().patchMedia(id, { proxy: p, proxyBusy: false })
+    useStore.getState().setStatus(`Proxy ready for ${m.name}`)
+    engine.invalidate()
+  } catch (e: any) {
+    useStore.getState().patchMedia(id, { proxyBusy: false, error: String(e.message || e) })
+  }
+}

@@ -1,0 +1,20 @@
+const { contextBridge, ipcRenderer, webUtils } = require('electron')
+contextBridge.exposeInMainWorld('api', {
+  importDialog: () => ipcRenderer.invoke('import-dialog'),
+  probe: (p) => ipcRenderer.invoke('probe', p),
+  thumb: (p, t) => ipcRenderer.invoke('thumb', p, t),
+  waveform: (p) => ipcRenderer.invoke('waveform', p),
+  proxy: (p) => ipcRenderer.invoke('proxy', p),
+  saveProject: (data, p) => ipcRenderer.invoke('save-project', data, p),
+  openProject: (p) => ipcRenderer.invoke('open-project', p),
+  exportDialog: () => ipcRenderer.invoke('export-dialog'),
+  exportProject: (project, out) => ipcRenderer.invoke('export', project, out),
+  cancelExport: () => ipcRenderer.invoke('export-cancel'),
+  onExportProgress: (cb) => ipcRenderer.on('export-progress', (_e, v) => cb(v)),
+  cacheInfo: () => ipcRenderer.invoke('cache-info'),
+  clearCache: () => ipcRenderer.invoke('cache-clear'),
+  mediaUrl: (p) => 'media://local/' + encodeURIComponent(p),
+  onMenu: (cb) => ipcRenderer.on('menu', (_e, v) => cb(v)),
+  argv: () => ipcRenderer.invoke('argv'),
+  pathForFile: (f) => webUtils.getPathForFile(f),
+})

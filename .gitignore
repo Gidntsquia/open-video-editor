@@ -1,0 +1,9 @@
+plans/
+node_modules/
+dist/
+cache/
+.env
+*.mp4
+*.mkv
+*.mov
+*.wav

@@ -1,0 +1,1 @@
+- [No focus stealing](feedback_no_focus_steal.md) — launch test app with OVE_INACTIVE=1 so it doesn't cover user's windows
