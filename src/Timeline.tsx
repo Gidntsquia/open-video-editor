@@ -1,10 +1,11 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useStore } from './store'
 import { engine } from './engine'
 import type { Clip } from './types'
 import { clipEnd, sequenceEnd } from '../shared/math.js'
 
 export const LABEL_W = 70
+export const tlApi: { dropMedia?: (id: string, x: number, y: number) => boolean } = {}
 const ROW_H = 58
 
 function fmtTime(t: number, fps: number) {
@@ -42,10 +43,11 @@ function ClipView({ clip, onDown, onTrim }: { clip: Clip; onDown: (e: React.Poin
   const selected = useStore((s) => s.selection.includes(clip.id))
   const thumb = useStore((s) => (clip.mediaId ? s.thumbs[clip.mediaId] : undefined))
   const name = useStore((s) => (clip.mediaId ? s.media[clip.mediaId]?.name : clip.text))
-  const w = Math.max(3, clip.dur * zoom)
+  const w = Math.max(10, clip.dur * zoom)
+  const eg = Math.min(6, Math.floor(w / 3))
   return (
     <div
-      className={`clip ${clip.kind} ${selected ? 'sel' : ''}`}
+      className={`clip ${clip.kind} ${selected ? 'sel' : ''} ${w < 40 ? 'tiny' : ''}`}
       data-clip={clip.id}
       style={{ left: clip.start * zoom, width: w }}
       onPointerDown={(e) => onDown(e, clip)}
@@ -68,8 +70,8 @@ function ClipView({ clip, onDown, onTrim }: { clip: Clip; onDown: (e: React.Poin
       {clip.fadeIn > 0 && <div className="fade fi" style={{ width: clip.fadeIn * zoom }} />}
       {clip.fadeOut > 0 && <div className="fade fo" style={{ width: clip.fadeOut * zoom }} />}
       <span className="cname">{name}{clip.speed !== 1 ? ` (${clip.speed}x)` : ''}</span>
-      <div className="edge l" onPointerDown={(e) => onTrim(e, clip, 'l')} />
-      <div className="edge r" onPointerDown={(e) => onTrim(e, clip, 'r')} />
+      <div className="edge l" style={{ width: eg }} onPointerDown={(e) => onTrim(e, clip, 'l')} />
+      <div className="edge r" style={{ width: eg }} onPointerDown={(e) => onTrim(e, clip, 'r')} />
     </div>
   )
 }
@@ -77,13 +79,14 @@ function ClipView({ clip, onDown, onTrim }: { clip: Clip; onDown: (e: React.Poin
 function Playhead() {
   const t = useStore((s) => s.playhead)
   const zoom = useStore((s) => s.zoom)
-  return <div className="playhead" style={{ left: LABEL_W + t * zoom }} />
+  return <div className="playhead" style={{ left: LABEL_W + t * zoom - 1 }}><div className="phead" /></div>
 }
 
 export function Timeline() {
   const st = useStore()
   const { tracks, clips, zoom } = st
   const scroller = useRef<HTMLDivElement>(null)
+  const [guide, setGuide] = useState<number | null>(null)
   const rows = [...tracks.filter((t) => t.kind === 'video').reverse(), ...tracks.filter((t) => t.kind === 'audio')]
   const total = Math.max(60, sequenceEnd(clips) + 30)
 
@@ -98,6 +101,7 @@ export function Timeline() {
     const th = 8 / s.zoom
     let best = t, bd = th
     for (const p of pts) { const d = Math.abs(p - t); if (d < bd) { bd = d; best = p } }
+    setGuide(best !== t ? best : null)
     return best
   }
   const timeAt = (clientX: number) => {
@@ -145,7 +149,7 @@ export function Timeline() {
         }), dirty: true,
       }))
     }
-    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); if (moved) { useStore.getState().overwrite(grp); setGuide(null) } }
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up)
   }
 
@@ -154,7 +158,11 @@ export function Timeline() {
     e.stopPropagation()
     const s = useStore.getState()
     if (s.tool === 'razor') return
+    if (!s.selection.includes(c.id)) s.setSelection([c.id])
     const grp = new Set(s.group([c.id]))
+    const lane = s.clips.filter((x) => x.trackId === c.trackId && !grp.has(x.id))
+    const prevEnd = Math.max(0, ...lane.filter((x) => x.start + x.dur <= c.start + 1e-4 && !c.transition).map((x) => x.start + x.dur))
+    const nextStart = Math.min(Infinity, ...lane.filter((x) => x.start >= c.start + c.dur - 1e-4 && !x.transition).map((x) => x.start))
     const snapshot = new Map(s.clips.filter((x) => grp.has(x.id)).map((x) => [x.id, { ...x }]))
     const pts = snapPts(grp); let started = false
     const move = (ev: PointerEvent) => {
@@ -170,16 +178,18 @@ export function Timeline() {
             let ns = Math.min(t, o.start + o.dur - minDur)
             if (o.kind !== 'title') ns = Math.max(ns, o.start - o.in / o.speed)
             ns = Math.max(0, ns)
+            if (x.id === c.id) ns = Math.max(ns, Math.min(prevEnd, o.start))
             const d = ns - o.start
             return { ...o, start: ns, in: o.in + d * o.speed, dur: o.dur - d, keys: o.keys.map((k) => ({ t: k.t - d, v: k.v })), transition: d > 0 ? Math.min(o.transition, o.dur - d) : o.transition }
           }
           let dur = Math.max(minDur, t - o.start)
+          if (x.id === c.id && nextStart < Infinity && !o.transOut) dur = Math.min(dur, nextStart - o.start)
           if (m) dur = Math.min(dur, (m.dur - o.in) / o.speed)
           return { ...o, dur }
         }), dirty: true,
       }))
     }
-    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); setGuide(null) }
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up)
   }
 
@@ -187,19 +197,34 @@ export function Timeline() {
     const go = (ev: { clientX: number }) => engine.seek(snapTo(timeAt(ev.clientX), snapPts(new Set())))
     go(e)
     const mv = (ev: PointerEvent) => go(ev)
-    const up = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up) }
+    const up = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); setGuide(null) }
     window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up)
   }
 
-  const onDrop = (e: React.DragEvent, trackId: string) => {
-    e.preventDefault()
-    const id = e.dataTransfer.getData('text/media-id'); if (!id) return
-    const t = snapTo(timeAt(e.clientX), snapPts(new Set()))
-    st.addFromMedia(id, trackId, t)
+  tlApi.dropMedia = (id, x, y) => {
+    const r = scroller.current!.getBoundingClientRect()
+    if (x < r.left || x > r.right || y < r.top || y > r.bottom) return false
+    const row = rowAt(y); if (!row) return false
+    const t = snapTo(timeAt(x), snapPts(new Set())); setGuide(null)
+    useStore.getState().addFromMedia(id, row, t)
+    return true
   }
+  useEffect(() => {
+    const el = scroller.current!
+    const wheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return
+      e.preventDefault()
+      const S = useStore.getState(); const r = el.getBoundingClientRect()
+      const x = e.clientX - r.left + el.scrollLeft - LABEL_W; const t = x / S.zoom
+      S.setZoom(S.zoom * (e.deltaY < 0 ? 1.25 : 0.8))
+      requestAnimationFrame(() => { el.scrollLeft = LABEL_W + t * useStore.getState().zoom - (e.clientX - r.left) + 0 })
+    }
+    el.addEventListener('wheel', wheel, { passive: false })
+    return () => el.removeEventListener('wheel', wheel)
+  }, [])
 
   // ruler ticks
-  const step = zoom > 200 ? 1 : zoom > 80 ? 2 : zoom > 40 ? 5 : zoom > 18 ? 10 : zoom > 9 ? 30 : 60
+  const step = zoom > 200 ? 1 : zoom > 80 ? 2 : zoom > 40 ? 5 : zoom > 18 ? 10 : zoom > 9 ? 30 : zoom > 4 ? 60 : zoom > 1.5 ? 120 : zoom > 0.6 ? 300 : 900
   const ticks: number[] = []
   for (let t = 0; t < total; t += step) ticks.push(t)
 
@@ -214,7 +239,6 @@ export function Timeline() {
         </div>
         {rows.map((tr) => (
           <div key={tr.id} className={`row ${tr.kind}`} data-track={tr.id} style={{ height: ROW_H }}
-            onDragOver={(e) => e.preventDefault()} onDrop={(e) => onDrop(e, tr.id)}
             onPointerDown={(e) => { if (e.target === e.currentTarget) { st.setSelection([]); } }}>
             <div className="label" style={{ width: LABEL_W }}>
               <b>{tr.name}</b>
@@ -229,6 +253,7 @@ export function Timeline() {
             </div>
           </div>
         ))}
+        {guide !== null && <div className="snapline" style={{ left: LABEL_W + guide * zoom }} />}
         <Playhead />
       </div>
     </div>

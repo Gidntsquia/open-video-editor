@@ -146,6 +146,17 @@ function cacheInfo() {
 }
 ipcMain.handle('cache-info', cacheInfo)
 ipcMain.handle('cache-clear', () => { for (const f of fs.readdirSync(CACHE)) fs.rmSync(path.join(CACHE, f), { recursive: true, force: true }); return cacheInfo() })
+// Read-only: list a few clips from the OBS folder (never writes there).
+ipcMain.handle('sample-clips', () => {
+  const dir = process.env.OVE_SAMPLES || 'D:\\OBS Videos'
+  try {
+    const want = ['2026-09-15 01-52-36.mkv', '2023-08-16 23-55-20.mp4']
+    const files = fs.readdirSync(dir).filter((f) => /\.(mp4|mkv|mov)$/i.test(f)).sort()
+    const pick = want.filter((w) => files.includes(w))
+    for (const f of files) { if (pick.length >= 4) break; if (!pick.includes(f) && fs.statSync(path.join(dir, f)).size < 150e6) pick.push(f) }
+    return pick.map((f) => path.join(dir, f))
+  } catch { return [] }
+})
 ipcMain.handle('argv', () => process.argv)
 
 function createWindow() {

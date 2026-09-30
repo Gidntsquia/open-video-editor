@@ -15,7 +15,7 @@ const blank = (o: Partial<Clip>): Clip => ({
   transition: 0, transOut: 0, brightness: 1, contrast: 1, saturation: 1, crop: { l: 0, r: 0, t: 0, b: 0 }, scale: 1, posX: 0, posY: 0, ...o,
 })
 
-type Snap = { clips: Clip[] }
+type Snap = { clips: Clip[]; media: Record<string, Media> }
 export type State = {
   media: Record<string, Media>
   thumbs: Record<string, string>
@@ -44,6 +44,10 @@ export type State = {
   undo: () => void
   redo: () => void
   addMedia: (m: Media) => void
+  removeMedia: (ids: string[]) => number
+  binSel: string[]
+  setBinSel: (ids: string[]) => void
+  overwrite: (ids: string[]) => void
   patchMedia: (id: string, p: Partial<Media>) => void
   setSequence: (w: number, h: number, fps: number) => void
   addFromMedia: (mediaId: string, trackId: string, start: number) => void
@@ -62,16 +66,16 @@ export type State = {
 }
 
 export const useStore = create<State>((set, get) => {
-  const snap = (): Snap => ({ clips: structuredClone(get().clips) })
+  const snap = (): Snap => ({ clips: structuredClone(get().clips), media: get().media })
   return {
     media: {}, thumbs: {}, waves: {}, tracks: TRACKS, clips: [], width: 1920, height: 1080, fps: 30,
-    playhead: 0, playing: false, selection: [], tool: 'select', zoom: 60, snap: true,
+    playhead: 0, playing: false, selection: [], binSel: [], tool: 'select', zoom: 60, snap: true,
     past: [], future: [], lastEdit: { key: '', t: 0 }, projectPath: null, dirty: false, status: 'Ready',
     setStatus: (status) => set({ status }),
     setPlayhead: (playhead) => set({ playhead: Math.max(0, playhead) }),
-    setSelection: (selection) => set({ selection }),
+    setSelection: (selection) => set((s) => ({ selection, binSel: selection.length ? [] : s.binSel })),
     setTool: (tool) => set({ tool }),
-    setZoom: (zoom) => set({ zoom: Math.min(600, Math.max(4, zoom)) }),
+    setZoom: (zoom) => set({ zoom: Math.min(600, Math.max(0.1, zoom)) }),
     pushHistory: (key) => {
       const s = get(); const now = performance.now()
       if (key && s.lastEdit.key === key && now - s.lastEdit.t < 900) { set({ lastEdit: { key, t: now } }); return }
@@ -79,14 +83,50 @@ export const useStore = create<State>((set, get) => {
     },
     undo: () => {
       const s = get(); const p = s.past[s.past.length - 1]; if (!p) return
-      set({ past: s.past.slice(0, -1), future: [...s.future, snap()], clips: p.clips, lastEdit: { key: '', t: 0 }, dirty: true,
+      set({ past: s.past.slice(0, -1), future: [...s.future, snap()], clips: p.clips, media: p.media, lastEdit: { key: '', t: 0 }, dirty: true,
         selection: s.selection.filter((id) => p.clips.some((c) => c.id === id)) })
     },
     redo: () => {
       const s = get(); const f = s.future[s.future.length - 1]; if (!f) return
-      set({ future: s.future.slice(0, -1), past: [...s.past, snap()], clips: f.clips, lastEdit: { key: '', t: 0 }, dirty: true })
+      set({ future: s.future.slice(0, -1), past: [...s.past, snap()], clips: f.clips, media: f.media, lastEdit: { key: '', t: 0 }, dirty: true })
     },
     addMedia: (m) => set((s) => ({ media: { ...s.media, [m.id]: m }, dirty: true })),
+    setBinSel: (binSel) => set({ binSel }),
+    removeMedia: (ids) => {
+      const s = get(); const del = new Set(ids.filter((i) => s.media[i])); if (!del.size) return 0
+      const used = s.clips.filter((c) => c.mediaId && del.has(c.mediaId)).length
+      get().pushHistory()
+      const media = { ...s.media }; del.forEach((i) => delete media[i])
+      const clips = s.clips.filter((c) => !(c.mediaId && del.has(c.mediaId)))
+      set({ media, clips, binSel: [], selection: s.selection.filter((i) => clips.some((c) => c.id === i)), dirty: true,
+        status: `Removed ${del.size} item${del.size > 1 ? 's' : ''} from the bin` + (used ? ` and ${used} timeline clip${used > 1 ? 's' : ''} using ${del.size > 1 ? 'them' : 'it'} (Ctrl+Z to undo)` : ' (Ctrl+Z to undo)') })
+      return used
+    },
+    // Premiere-style overwrite: clips in `ids` win; same-track clips they cover are trimmed or split.
+    overwrite: (ids) => {
+      const s = get(); const mv = new Set(ids); const eps = 1e-4
+      const links = new Map<string, string>(); const out: Clip[] = []
+      for (const c of s.clips) {
+        if (mv.has(c.id)) { out.push(c); continue }
+        const over = s.clips.filter((m) => mv.has(m.id) && m.trackId === c.trackId && m.start < c.start + c.dur - eps && m.start + m.dur > c.start + eps)
+        if (!over.length) { out.push(c); continue }
+        // subtract the union of covering intervals from c
+        const cov = over.map((m) => [m.start, m.start + m.dur] as [number, number]).sort((a, b) => a[0] - b[0])
+        let pos = c.start; const end = c.start + c.dur; const pieces: [number, number][] = []
+        for (const [a, b] of cov) { if (a > pos + eps) pieces.push([pos, Math.min(a, end)]); pos = Math.max(pos, b) }
+        if (pos < end - eps) pieces.push([pos, end])
+        pieces.forEach(([a, b], i) => {
+          if (b - a < eps) return
+          let link = c.link
+          if (c.link && i > 0) { if (!links.has(c.link + i)) links.set(c.link + i, uid('l')); link = links.get(c.link + i) }
+          const cut = a - c.start
+          out.push({ ...structuredClone(c), id: i === 0 ? c.id : uid('c'), link, start: a, in: c.in + cut * c.speed, dur: b - a,
+            keys: c.keys.map((k) => ({ t: k.t - cut, v: k.v })), transition: a > c.start + eps ? 0 : c.transition,
+            transOut: b < end - eps ? 0 : c.transOut, fadeIn: a > c.start + eps ? 0 : c.fadeIn, fadeOut: b < end - eps ? 0 : c.fadeOut })
+        })
+      }
+      set({ clips: out, dirty: true })
+    },
     patchMedia: (id, p) => set((s) => (s.media[id] ? { media: { ...s.media, [id]: { ...s.media[id], ...p } } } : s)),
     setSequence: (width, height, fps) => set({ width, height, fps, dirty: true }),
     setClips: (fn, history = true) => {
@@ -115,6 +155,7 @@ export const useStore = create<State>((set, get) => {
       }
       get().pushHistory()
       set((st) => ({ clips: [...st.clips, ...out], selection: out.map((c) => c.id), dirty: true }))
+      get().overwrite(out.map((c) => c.id))
     },
     split: (t, ids) => {
       const s = get(); const eps = 1 / s.fps / 2
@@ -192,7 +233,7 @@ export const useStore = create<State>((set, get) => {
     serialize: () => { const s = get(); return { version: 1, width: s.width, height: s.height, fps: s.fps, media: s.media, tracks: s.tracks, clips: s.clips } },
     loadProject: (d, path) => set({
       media: d.media || {}, tracks: d.tracks || TRACKS, clips: d.clips || [], width: d.width, height: d.height, fps: d.fps,
-      playhead: 0, selection: [], past: [], future: [], projectPath: path, dirty: false, thumbs: {}, waves: {},
+      playhead: 0, selection: [], binSel: [], past: [], future: [], projectPath: path, dirty: false, thumbs: {}, waves: {},
     }),
   }
 })

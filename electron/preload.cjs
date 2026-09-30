@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron')
 contextBridge.exposeInMainWorld('api', {
   importDialog: () => ipcRenderer.invoke('import-dialog'),
+  sampleClips: () => ipcRenderer.invoke('sample-clips'),
   probe: (p) => ipcRenderer.invoke('probe', p),
   thumb: (p, t) => ipcRenderer.invoke('thumb', p, t),
   waveform: (p) => ipcRenderer.invoke('waveform', p),

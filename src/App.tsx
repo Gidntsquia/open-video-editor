@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useStore, uid } from './store'
 import { engine, makeProxy } from './engine'
-import { Timeline, fmtTime } from './Timeline'
+import { Timeline, fmtTime, tlApi } from './Timeline'
 import type { Clip, Media } from './types'
 import { FONTS, sequenceEnd } from '../shared/math.js'
 
@@ -31,16 +31,37 @@ function Bin() {
   const mediaMap = useStore((s) => s.media)
   const media = Object.values(mediaMap)
   const thumbs = useStore((s) => s.thumbs)
+  const binSel = useStore((s) => s.binSel)
   const playhead = useStore((s) => s.playhead)
   const addFromMedia = useStore((s) => s.addFromMedia)
+  const [ghost, setGhost] = useState<{ x: number; y: number; name: string } | null>(null)
+  const [ctx, setCtx] = useState<{ x: number; y: number; id: string } | null>(null)
+  useEffect(() => { if (!ctx) return; const c = () => setCtx(null); window.addEventListener('pointerdown', c); return () => window.removeEventListener('pointerdown', c) }, [ctx])
+  const down = (e: React.PointerEvent, m: Media) => {
+    if (e.button !== 0) return
+    const S = useStore.getState()
+    S.setBinSel(e.shiftKey || e.ctrlKey ? (S.binSel.includes(m.id) ? S.binSel.filter((x) => x !== m.id) : [...S.binSel, m.id]) : [m.id])
+    useStore.setState({ selection: [] })
+    const x0 = e.clientX, y0 = e.clientY; let moved = false
+    const mv = (ev: PointerEvent) => {
+      if (!moved && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 5) return
+      moved = true; setGhost({ x: ev.clientX, y: ev.clientY, name: m.name })
+    }
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); setGhost(null)
+      if (moved) tlApi.dropMedia?.(m.id, ev.clientX, ev.clientY)
+    }
+    window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up)
+  }
   return (
-    <div className="panel bin">
+    <div className="panel bin" data-bin>
       <div className="ptitle">Media <button onClick={async () => importPaths(await window.api.importDialog())}>Import…</button></div>
-      <div className="binlist">
+      <div className="binlist" onPointerDown={(e) => { if (e.target === e.currentTarget) useStore.getState().setBinSel([]) }}>
         {media.length === 0 && <div className="hint">No media. Click Import… (Ctrl+I) or drop files here.</div>}
         {media.map((m) => (
-          <div key={m.id} className="binitem" draggable onDragStart={(e) => e.dataTransfer.setData('text/media-id', m.id)}
-            onDoubleClick={() => addFromMedia(m.id, 'V1', playhead)} title="Drag onto the timeline, or double-click to add at the playhead">
+          <div key={m.id} data-media={m.id} className={`binitem ${binSel.includes(m.id) ? 'sel' : ''}`} onPointerDown={(e) => down(e, m)}
+            onContextMenu={(e) => { e.preventDefault(); if (!binSel.includes(m.id)) useStore.getState().setBinSel([m.id]); setCtx({ x: e.clientX, y: e.clientY, id: m.id }) }}
+            onDoubleClick={() => addFromMedia(m.id, 'V1', playhead)} title="Drag onto the timeline, or double-click to add at the playhead. Delete removes it from the bin.">
             {thumbs[m.id] ? <img src={thumbs[m.id]} draggable={false} /> : <div className="ph" />}
             <div className="meta">
               <div className="nm">{m.name}</div>
@@ -49,9 +70,15 @@ function Bin() {
                 {!m.proxy && !m.proxyBusy && <a onClick={() => makeProxy(m.id)}> make proxy</a>}</div>
               {m.error && <div className="err">{m.error.slice(0, 80)}</div>}
             </div>
+            <button className="rm" title="Remove from bin" onPointerDown={(e) => e.stopPropagation()} onClick={() => useStore.getState().removeMedia([m.id])}>×</button>
           </div>
         ))}
       </div>
+      {ghost && <div className="dragghost" style={{ left: ghost.x + 10, top: ghost.y + 10 }}>{ghost.name}</div>}
+      {ctx && <div className="ctx" style={{ left: ctx.x, top: ctx.y }} onPointerDown={(e) => e.stopPropagation()}>
+        <div onClick={() => { addFromMedia(ctx.id, 'V1', playhead); setCtx(null) }}>Add to timeline at playhead</div>
+        <div onClick={() => { useStore.getState().removeMedia(useStore.getState().binSel.length ? useStore.getState().binSel : [ctx.id]); setCtx(null) }}>Remove from bin</div>
+      </div>}
     </div>
   )
 }
@@ -230,6 +257,10 @@ export default function App() {
     useStore.getState().setStatus('Opened ' + r.path)
   }
   useEffect(() => {
+    // empty launch: pre-fill the bin with a few read-only sample clips
+    window.api.sampleClips?.().then((ps: string[]) => { if (ps.length && !Object.keys(useStore.getState().media).length && !useStore.getState().projectPath) importPaths(ps).then(() => useStore.setState({ dirty: false, past: [] })) }).catch(() => {})
+  }, [])
+  useEffect(() => {
     window.api.onMenu(async (m: string) => {
       if (m === 'import') importPaths(await window.api.importDialog())
       if (m === 'open') open()
@@ -257,7 +288,7 @@ export default function App() {
       else if (k === 'j') { engine.pause(); engine.play(-1) }
       else if (k === 'v') S.setTool('select')
       else if (k === 'c') S.setTool('razor')
-      else if (k === 'delete' || k === 'backspace') S.remove(S.selection, e.shiftKey)
+      else if (k === 'delete' || k === 'backspace') { if (S.binSel.length && !S.selection.length) S.removeMedia(S.binSel); else S.remove(S.selection, e.shiftKey) }
       else if (k === 'arrowleft') { engine.pause(); engine.seek(S.playhead - (e.shiftKey ? 5 : 1) / fps) }
       else if (k === 'arrowright') { engine.pause(); engine.seek(S.playhead + (e.shiftKey ? 5 : 1) / fps) }
       else if (k === 'arrowup' || k === 'arrowdown') {
@@ -295,7 +326,7 @@ export default function App() {
         <button className={st.snap ? 'on' : ''} onClick={() => useStore.setState({ snap: !st.snap })}>Snap</button>
         <button disabled={!st.past.length} onClick={() => st.undo()}>Undo</button>
         <button disabled={!st.future.length} onClick={() => st.redo()}>Redo</button>
-        <label className="zoom">Zoom <input type="range" min={4} max={400} value={st.zoom} onChange={(e) => st.setZoom(+e.target.value)} /></label>
+        <label className="zoom">Zoom <input type="range" min={-3.3} max={8.6} step={0.05} value={Math.log2(st.zoom)} onChange={(e) => st.setZoom(2 ** +e.target.value)} /></label>
         <span className="grow" />
         <CacheBtn />
         <button className="primary" onClick={() => setShowExport(true)}>Export…</button>
