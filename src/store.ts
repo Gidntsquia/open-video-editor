@@ -55,6 +55,9 @@ export type State = {
   group: (ids: string[]) => string[]
   split: (t: number, ids?: string[]) => void
   remove: (ids: string[], ripple: boolean) => void
+  copy: (ids: string[]) => number
+  paste: (t: number) => void
+  rippleTrim: (t: number, side: 'start' | 'end') => void
   addTitle: (start: number) => void
   setProps: (ids: string[], patch: Partial<Clip>, key?: string) => void
   setSpeed: (ids: string[], speed: number) => void
@@ -65,6 +68,7 @@ export type State = {
   serialize: () => any
 }
 
+let clipboard: Clip[] = []
 export const useStore = create<State>((set, get) => {
   const snap = (): Snap => ({ clips: structuredClone(get().clips), media: get().media })
   return {
@@ -186,6 +190,35 @@ export const useStore = create<State>((set, get) => {
         clips: st.clips.filter((c) => !grp.has(c.id)).map((c) => (ripple && trs.has(c.trackId) && c.start >= ge - 1e-6 ? { ...c, start: c.start - (ge - gs) } : c)),
         selection: [], dirty: true,
       }))
+    },
+    copy: (ids) => {
+      const s = get(); const g = new Set(s.group(ids)); clipboard = structuredClone(s.clips.filter((c) => g.has(c.id)))
+      if (clipboard.length) set({ status: `Copied ${clipboard.length} clip${clipboard.length > 1 ? 's' : ''}` })
+      return clipboard.length
+    },
+    paste: (t) => {
+      if (!clipboard.length) return
+      const t0 = Math.min(...clipboard.map((c) => c.start)); const lm = new Map<string, string>()
+      const add = clipboard.map((c) => ({ ...structuredClone(c), id: uid('c'), start: t + c.start - t0, transition: 0, transOut: 0,
+        link: c.link ? (lm.get(c.link) ?? (lm.set(c.link, uid('l')), lm.get(c.link)!)) : undefined }))
+      get().pushHistory()
+      set((st) => ({ clips: [...st.clips, ...add], selection: add.map((c) => c.id), dirty: true }))
+      get().overwrite(add.map((c) => c.id))
+    },
+    rippleTrim: (t, side) => {
+      const s = get(); const eps = 1 / s.fps / 2
+      const hits = s.clips.filter((c) => t > c.start + eps && t < c.start + c.dur - eps && (!s.selection.length || s.group(s.selection).includes(c.id)))
+      if (!hits.length) return
+      get().pushHistory()
+      const H = new Map(hits.map((c) => [c.id, c])); const trs = new Map<string, number>()
+      const cutOf = (c: Clip) => (side === 'start' ? t - c.start : c.start + c.dur - t)
+      for (const c of hits) trs.set(c.trackId, Math.max(trs.get(c.trackId) ?? 0, cutOf(c)))
+      set((st) => ({ dirty: true, clips: st.clips.map((c) => {
+        const h = H.get(c.id)
+        if (h) { const cut = cutOf(h); return side === 'start' ? { ...h, in: h.in + cut * h.speed, dur: h.dur - cut, transition: 0, fadeIn: 0, keys: h.keys.map((k) => ({ t: k.t - cut, v: k.v })) } : { ...h, dur: h.dur - cut, transOut: 0, fadeOut: 0 } }
+        const sh = trs.get(c.trackId)
+        return sh && c.start >= Math.min(...hits.filter((x) => x.trackId === c.trackId).map((x) => x.start + x.dur)) - 1e-6 ? { ...c, start: c.start - sh } : c
+      }) }))
     },
     addTitle: (start) => {
       const c = blank({ kind: 'title', trackId: 'V2', start, dur: 3, text: 'New title', font: 'Arial', size: 96, color: '#ffffff', x: 0.5, y: 0.5 })

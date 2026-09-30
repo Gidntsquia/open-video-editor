@@ -279,6 +279,10 @@ export default function App() {
       let used = true
       if (ctrl && k === 'z' && !e.shiftKey) S.undo()
       else if (ctrl && (k === 'y' || (k === 'z' && e.shiftKey))) S.redo()
+      else if (ctrl && k === 'a') S.setSelection(S.clips.map((c) => c.id))
+      else if (ctrl && k === 'c') S.copy(S.selection)
+      else if (ctrl && k === 'x') { if (S.copy(S.selection)) S.remove(S.selection, false) }
+      else if (ctrl && k === 'v') S.paste(S.playhead)
       else if (ctrl && k === 'k') S.split(S.playhead, S.selection.length ? S.selection : undefined)
       else if (ctrl && k === 'd') { const c = S.clips.find((x) => x.id === S.selection[0]); if (c) S.addTransition(c.id, 1) }
       else if (ctrl) used = false
@@ -286,6 +290,10 @@ export default function App() {
       else if (k === 'k') engine.pause()
       else if (k === 'l') { engine.playing && engine.dir > 0 ? null : engine.play(1) }
       else if (k === 'j') { engine.pause(); engine.play(-1) }
+      else if (k === 'q') S.rippleTrim(S.playhead, 'start')
+      else if (k === 'w') S.rippleTrim(S.playhead, 'end')
+      else if (k === 'escape') { S.setSelection([]); S.setBinSel([]) }
+      else if (k === '\\') S.setZoom(Math.max(0.1, (window.innerWidth - 300) / Math.max(5, sequenceEnd(S.clips) * 1.05)))
       else if (k === 'v') S.setTool('select')
       else if (k === 'c') S.setTool('razor')
       else if (k === 'delete' || k === 'backspace') { if (S.binSel.length && !S.selection.length) S.removeMedia(S.binSel); else S.remove(S.selection, e.shiftKey) }

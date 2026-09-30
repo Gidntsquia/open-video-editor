@@ -1,0 +1,15 @@
+import { done, st, key, sleep, check, ev } from '../drive.mjs'
+const media = Object.values(await st('s.media')); const A = media.find((m) => m.name.startsWith('2021-04-11 15-00-15'))
+await ev(`__ove.store.setState({clips:[],past:[],future:[],selection:[],zoom:100,playhead:0,tool:'select'})`)
+await ev(`__ove.store.getState().addFromMedia('${A.id}','V1',0)`); await sleep(200)
+const n0 = (await st('s.clips')).length
+await key('a', ['ctrl']); check('Ctrl+A selects all', (await st('s.selection')).length === n0)
+await key('c', ['ctrl']); await ev(`__ove.engine.seek(5)`); await key('v', ['ctrl'])
+let cs = await st('s.clips'); check('Ctrl+V pastes at playhead', cs.length === n0 * 2 && cs.some((c) => Math.abs(c.start - 5) < 0.05), cs.map((c) => c.start.toFixed(2)).join(','))
+await key('z', ['ctrl']); check('undo paste', (await st('s.clips')).length === n0)
+await ev(`__ove.store.getState().setSelection([])`); await ev(`__ove.engine.seek(1)`); await key('q')
+cs = (await st('s.clips')).filter((c) => c.trackId === 'V1'); check('Q ripple-trims start to playhead', cs[0] && Math.abs(cs[0].in - 1) < 0.05 && Math.abs(cs[0].dur - 2.6) < 0.1, JSON.stringify(cs[0] && [cs[0].in, cs[0].dur]))
+await ev(`__ove.engine.seek(1.5)`); await key('w')
+cs = (await st('s.clips')).filter((c) => c.trackId === 'V1'); check('W ripple-trims end to playhead', Math.abs(cs[0].dur - 1.5) < 0.1, String(cs[0].dur))
+await key('Escape'); check('Esc deselects', (await st('s.selection')).length === 0)
+done()
