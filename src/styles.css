@@ -56,3 +56,5 @@ textarea { width:100%; resize:vertical; } .row { display:flex; gap:6px; align-it
 .dragghost { position:fixed; z-index:99; pointer-events:none; background:rgba(77,141,255,.85); padding:3px 8px; border-radius:4px; font-size:12px; }
 .binitem.sel { outline:2px solid var(--acc); } .binitem .rm { margin-left:auto; align-self:flex-start; padding:0 6px; }
 .ctx { position:fixed; z-index:90; background:var(--p2); border:1px solid var(--b); border-radius:4px; padding:4px 0; min-width:140px; } .ctx div { padding:5px 14px; cursor:pointer; } .ctx div:hover { background:var(--acc); }
+
+.marquee { position:fixed; z-index:60; border:1px solid var(--acc); background:rgba(77,141,255,.18); pointer-events:none; }

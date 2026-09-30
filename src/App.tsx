@@ -251,6 +251,7 @@ export default function App() {
     if (p) { useStore.setState({ projectPath: p, dirty: false }); S.setStatus('Saved ' + p) }
   }
   const open = async () => {
+    if (useStore.getState().dirty && !window.confirm('Discard unsaved changes and open another project?')) return
     const r = await window.api.openProject(null); if (!r) return
     engine.pause(); useStore.getState().loadProject(r.data, r.path)
     Object.values(useStore.getState().media).forEach((m) => loadAssets(m as Media))
@@ -259,6 +260,14 @@ export default function App() {
   useEffect(() => {
     // empty launch: pre-fill the bin with a few read-only sample clips
     window.api.sampleClips?.().then((ps: string[]) => { if (ps.length && !Object.keys(useStore.getState().media).length && !useStore.getState().projectPath) importPaths(ps).then(() => useStore.setState({ dirty: false, past: [] })) }).catch(() => {})
+  }, [])
+  useEffect(() => {
+    const name = st.projectPath ? st.projectPath.split(/[\\/]/).pop() : 'Untitled'
+    document.title = `${st.dirty ? '* ' : ''}${name} - Open Video Editor`
+  }, [st.dirty, st.projectPath])
+  useEffect(() => {
+    const bu = (e: BeforeUnloadEvent) => { if (useStore.getState().dirty) { e.preventDefault(); e.returnValue = '' } }
+    window.addEventListener('beforeunload', bu); return () => window.removeEventListener('beforeunload', bu)
   }, [])
   useEffect(() => {
     window.api.onMenu(async (m: string) => {
@@ -274,6 +283,7 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       const tg = e.target as HTMLElement
       if (tg && /^(INPUT|TEXTAREA|SELECT)$/.test(tg.tagName) && !(tg as HTMLInputElement).type?.match(/range|checkbox/) ) return
+      if (tg && tg.tagName === 'BUTTON') tg.blur()  // Space/Enter must not re-press the last toolbar button
       const S = useStore.getState(); const ctrl = e.ctrlKey || e.metaKey; const k = e.key.toLowerCase()
       const fps = S.fps
       let used = true

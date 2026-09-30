@@ -38,7 +38,7 @@ function Waveform({ clip }: { clip: Clip }) {
   return <canvas ref={ref} className="wave" style={{ width: clip.dur * zoom }} />
 }
 
-function ClipView({ clip, onDown, onTrim }: { clip: Clip; onDown: (e: React.PointerEvent, c: Clip) => void; onTrim: (e: React.PointerEvent, c: Clip, edge: 'l' | 'r') => void }) {
+function ClipView({ clip, onDown, onTrim, onCtx }: { clip: Clip; onCtx: (e: React.MouseEvent, c: Clip) => void; onDown: (e: React.PointerEvent, c: Clip) => void; onTrim: (e: React.PointerEvent, c: Clip, edge: 'l' | 'r') => void }) {
   const zoom = useStore((s) => s.zoom)
   const selected = useStore((s) => s.selection.includes(clip.id))
   const thumb = useStore((s) => (clip.mediaId ? s.thumbs[clip.mediaId] : undefined))
@@ -51,6 +51,7 @@ function ClipView({ clip, onDown, onTrim }: { clip: Clip; onDown: (e: React.Poin
       data-clip={clip.id}
       style={{ left: clip.start * zoom, width: w }}
       onPointerDown={(e) => onDown(e, clip)}
+      onContextMenu={(e) => onCtx(e, clip)}
     >
       {clip.kind === 'video' && thumb && <img src={thumb} className="cthumb" draggable={false} />}
       {clip.kind === 'audio' && <Waveform clip={clip} />}
@@ -87,6 +88,39 @@ export function Timeline() {
   const { tracks, clips, zoom } = st
   const scroller = useRef<HTMLDivElement>(null)
   const [guide, setGuide] = useState<number | null>(null)
+  const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
+  const [ctx, setCtx] = useState<{ x: number; y: number; id: string } | null>(null)
+  useEffect(() => { if (!ctx) return; const c = () => setCtx(null); window.addEventListener('pointerdown', c); return () => window.removeEventListener('pointerdown', c) }, [ctx])
+  // keep the playhead in view while playing or stepping (page flip, like Premiere)
+  useEffect(() => {
+    const el = scroller.current; if (!el) return
+    const x = LABEL_W + st.playhead * zoom
+    if (x < el.scrollLeft + LABEL_W || x > el.scrollLeft + el.clientWidth - 4) el.scrollLeft = Math.max(0, x - LABEL_W - (el.clientWidth - LABEL_W) * 0.1)
+  }, [st.playhead])
+  const onCtx = (e: React.MouseEvent, c: Clip) => {
+    e.preventDefault()
+    const s = useStore.getState(); if (!s.selection.includes(c.id)) s.setSelection([c.id])
+    setCtx({ x: e.clientX, y: e.clientY, id: c.id })
+  }
+  const emptyDown = (e: React.PointerEvent) => {
+    const tg = e.target as HTMLElement
+    if (e.button !== 0 || !(tg.classList.contains('row') || tg.classList.contains('lane'))) return
+    const s = useStore.getState(); const base = e.shiftKey ? s.selection : []
+    if (!e.shiftKey) s.setSelection([])
+    const x0 = e.clientX, y0 = e.clientY; let moved = false
+    const mv = (ev: PointerEvent) => {
+      if (!moved && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 4) return
+      moved = true; setBox({ x0, y0, x1: ev.clientX, y1: ev.clientY })
+      const t0 = Math.min(timeAt(x0), timeAt(ev.clientX)), t1 = Math.max(timeAt(x0), timeAt(ev.clientX))
+      const ya = Math.min(y0, ev.clientY), yb = Math.max(y0, ev.clientY)
+      const rowsHit = new Set<string>()
+      scroller.current!.querySelectorAll<HTMLElement>('[data-track]').forEach((el) => { const r = el.getBoundingClientRect(); if (r.bottom > ya && r.top < yb) rowsHit.add(el.dataset.track!) })
+      const hit = useStore.getState().clips.filter((c) => rowsHit.has(c.trackId) && c.start < t1 && c.start + c.dur > t0).map((c) => c.id)
+      useStore.getState().setSelection([...new Set([...base, ...hit])])
+    }
+    const up = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); setBox(null) }
+    window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up)
+  }
   const rows = [...tracks.filter((t) => t.kind === 'video').reverse(), ...tracks.filter((t) => t.kind === 'audio')]
   const total = Math.max(60, sequenceEnd(clips) + 30)
 
@@ -240,7 +274,7 @@ export function Timeline() {
         </div>
         {rows.map((tr) => (
           <div key={tr.id} className={`row ${tr.kind}`} data-track={tr.id} style={{ height: ROW_H }}
-            onPointerDown={(e) => { if (e.target === e.currentTarget) { st.setSelection([]); } }}>
+            onPointerDown={emptyDown}>
             <div className="label" style={{ width: LABEL_W }}>
               <b>{tr.name}</b>
               {tr.kind === 'audio' ? (
@@ -250,13 +284,23 @@ export function Timeline() {
               )}
             </div>
             <div className="lane" style={{ left: LABEL_W }}>
-              {clips.filter((c) => c.trackId === tr.id).map((c) => <ClipView key={c.id} clip={c} onDown={onClipDown} onTrim={onTrim} />)}
+              {clips.filter((c) => c.trackId === tr.id).map((c) => <ClipView key={c.id} clip={c} onDown={onClipDown} onTrim={onTrim} onCtx={onCtx} />)}
             </div>
           </div>
         ))}
         {guide !== null && <div className="snapline" style={{ left: LABEL_W + guide * zoom }} />}
         <Playhead />
       </div>
+      {box && <div className="marquee" style={{ left: Math.min(box.x0, box.x1), top: Math.min(box.y0, box.y1), width: Math.abs(box.x1 - box.x0), height: Math.abs(box.y1 - box.y0) }} />}
+      {ctx && (() => { const S = useStore.getState; const c = S().clips.find((x) => x.id === ctx.id); const go = (f: () => void) => () => { f(); setCtx(null) }; return c && (
+        <div className="ctx" style={{ left: ctx.x, top: ctx.y }} onPointerDown={(e) => e.stopPropagation()}>
+          <div onClick={go(() => S().split(S().playhead, S().group([c.id])))}>Cut at playhead</div>
+          <div onClick={go(() => S().copy(S().selection))}>Copy</div>
+          <div onClick={go(() => { if (S().copy(S().selection)) S().remove(S().selection, false) })}>Cut</div>
+          <div onClick={go(() => S().remove(S().selection, false))}>Delete</div>
+          <div onClick={go(() => S().remove(S().selection, true))}>Ripple delete</div>
+          {c.link && <div onClick={go(() => S().unlink(S().selection))}>Unlink audio/video</div>}
+        </div>) })()}
     </div>
   )
 }

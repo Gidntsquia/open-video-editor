@@ -59,6 +59,7 @@ export type State = {
   paste: (t: number) => void
   rippleTrim: (t: number, side: 'start' | 'end') => void
   addTitle: (start: number) => void
+  unlink: (ids: string[]) => void
   setProps: (ids: string[], patch: Partial<Clip>, key?: string) => void
   setSpeed: (ids: string[], speed: number) => void
   addTransition: (id: string, d: number) => void
@@ -219,6 +220,10 @@ export const useStore = create<State>((set, get) => {
         const sh = trs.get(c.trackId)
         return sh && c.start >= Math.min(...hits.filter((x) => x.trackId === c.trackId).map((x) => x.start + x.dur)) - 1e-6 ? { ...c, start: c.start - sh } : c
       }) }))
+    },
+    unlink: (ids) => {
+      const grp = new Set(get().group(ids)); get().pushHistory()
+      set((st) => ({ clips: st.clips.map((c) => (grp.has(c.id) ? { ...c, link: undefined } : c)), dirty: true, status: 'Unlinked' }))
     },
     addTitle: (start) => {
       const c = blank({ kind: 'title', trackId: 'V2', start, dur: 3, text: 'New title', font: 'Arial', size: 96, color: '#ffffff', x: 0.5, y: 0.5 })

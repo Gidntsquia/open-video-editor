@@ -174,6 +174,10 @@ function createWindow() {
       { type: 'separator' }, { role: 'quit' } ] },
     { label: 'View', submenu: [{ role: 'toggleDevTools' }, { role: 'reload' }] },
   ]))
+  win.webContents.on('will-prevent-unload', (e) => {
+    const r = dialog.showMessageBoxSync(win, { type: 'warning', buttons: ['Discard and quit', 'Cancel'], defaultId: 1, cancelId: 1, title: 'Unsaved changes', message: 'This project has unsaved changes.' })
+    if (r === 0) e.preventDefault()
+  })
   if (process.env.OVE_INACTIVE) win.once('ready-to-show', () => win.showInactive())
   if (process.env.VITE_DEV) win.loadURL('http://localhost:5173'); else win.loadFile(path.join(root, 'dist', 'index.html'))
 }
