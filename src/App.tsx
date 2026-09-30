@@ -65,7 +65,7 @@ function Bin() {
             {thumbs[m.id] ? <img src={thumbs[m.id]} draggable={false} /> : <div className="ph" />}
             <div className="meta">
               <div className="nm">{m.name}</div>
-              <div className="sub">{fmtTime(m.dur, 30).slice(3, 8).replace(/^00:/, '')} · {m.w}×{m.h} · {Math.round(m.fps)}fps{m.hasAudio ? '' : ' · no audio'}</div>
+              <div className="sub">{Math.floor(m.dur / 60)}:{String(Math.floor(m.dur % 60)).padStart(2, '0')} · {m.w}×{m.h} · {Math.round(m.fps)}fps{m.hasAudio ? '' : ' · no audio'}</div>
               <div className="sub">{m.vcodec}{m.proxy ? ' · proxy' : ''}{m.proxyBusy ? ' · building proxy…' : ''}
                 {!m.proxy && !m.proxyBusy && <a onClick={() => makeProxy(m.id)}> make proxy</a>}</div>
               {m.error && <div className="err">{m.error.slice(0, 80)}</div>}

@@ -133,8 +133,9 @@ export function Timeline() {
       if (!moved) { S.pushHistory(); moved = true }
       let dt = (ev.clientX - x0) / S.zoom
       const ps = orig.get(c.id)! + dt, pe = ps + c.dur
-      const a = snapTo(ps, pts), b = snapTo(pe, pts)
-      dt = Math.abs(a - ps) <= Math.abs(b - pe) && a !== ps ? a - orig.get(c.id)! : b !== pe ? b - c.dur - orig.get(c.id)! : dt
+      const a = snapTo(ps, pts)
+      if (a !== ps) dt = a - orig.get(c.id)!
+      else { const b = snapTo(pe, pts); if (b !== pe) dt = b - c.dur - orig.get(c.id)! }
       const minStart = Math.min(...[...orig.values()])
       if (minStart + dt < 0) dt = -minStart
       const row = rowAt(ev.clientY)

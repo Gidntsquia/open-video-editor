@@ -45,3 +45,9 @@ Thumbnails, waveforms, 960 px proxies (built automatically for HEVC, very large 
 ## Credits
 
 Electron (MIT), React (MIT), zustand (MIT), Vite (MIT), ffmpeg-static (GPL-3.0 build of FFmpeg, https://ffmpeg.org), ffprobe-static (MIT, bundles FFmpeg's ffprobe). FFmpeg is licensed LGPL/GPL by its authors.
+
+
+## Media bin and editing notes
+- Bin: click to select, Delete / × / right-click removes (clips using it go too; Ctrl+Z restores). Drag an item to a track; dropping over a clip overwrites it (Premiere-style).
+- Ctrl+wheel zooms the timeline around the cursor. On an empty launch the bin is pre-filled with a few clips from `D:\OBS Videos` (read-only).
+- Test drivers: `test/deploy.sh`, `test/run.mjs` (mouse-driven CDP scenarios).

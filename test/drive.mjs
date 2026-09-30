@@ -34,3 +34,5 @@ export const key = async (k, mods = []) => {
 export const shot = async (f) => { const r = await send('Page.captureScreenshot', { format: 'png' }); (await import('node:fs')).writeFileSync(f, Buffer.from(r.result.data, 'base64')) }
 export const done = () => { ws.close(); process.exit(0) }
 export const check = (name, ok, info = '') => console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${info ? '  — ' + info : ''}`)
+export const typeText = (text) => send('Input.insertText', { text })
+export const tripleClick = async (x, y) => { await move(x, y); for (const n of [1, 2, 3]) { await mouse('mousePressed', x, y, { clickCount: n }); await mouse('mouseReleased', x, y, { clickCount: n }) } }
