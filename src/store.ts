@@ -230,9 +230,17 @@ export const useStore = create<State>((set, get) => {
       set((st) => ({ clips: st.clips.map((c) => (grp.has(c.id) ? { ...c, ...patch } : c)), dirty: true }))
     },
     setSpeed: (ids, speed) => {
-      const grp = new Set(get().group(ids))
+      const s0 = get(); const grp = new Set(s0.group(ids))
+      if (!(speed > 0)) return
+      // a slower clip grows; it may not run into the next clip on its track
+      let sp = speed
+      for (const c of s0.clips) if (grp.has(c.id)) {
+        const nx = s0.clips.filter((x) => x.trackId === c.trackId && !grp.has(x.id) && x.start >= c.start + c.dur - 1e-6).sort((a, b) => a.start - b.start)[0]
+        if (nx) sp = Math.max(sp, (c.dur * c.speed) / (nx.start - c.start))
+      }
+      if (sp > speed + 1e-9) set({ status: `Speed limited to ${(sp * 100).toFixed(1)}%: the clip would run into the next one` })
       get().pushHistory('speed:' + ids.join())
-      set((st) => ({ clips: st.clips.map((c) => (grp.has(c.id) ? { ...c, speed, dur: (c.dur * c.speed) / speed } : c)), dirty: true }))
+      set((st) => ({ clips: st.clips.map((c) => (grp.has(c.id) ? { ...c, speed: sp, dur: (c.dur * c.speed) / sp, keys: c.keys.map((k) => ({ t: (k.t * c.speed) / sp, v: k.v })) } : c)), dirty: true }))
     },
     addTransition: (id, d) => {
       const s = get(); const b = s.clips.find((c) => c.id === id); if (!b) return

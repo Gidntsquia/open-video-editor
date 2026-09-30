@@ -12,4 +12,12 @@ cs = (await st('s.clips')).filter((c) => c.trackId === 'V1'); check('Q ripple-tr
 await ev(`__ove.engine.seek(1.5)`); await key('w')
 cs = (await st('s.clips')).filter((c) => c.trackId === 'V1'); check('W ripple-trims end to playhead', Math.abs(cs[0].dur - 1.5) < 0.1, String(cs[0].dur))
 await key('Escape'); check('Esc deselects', (await st('s.selection')).length === 0)
+// speed change must not overlap the next clip
+await ev(`__ove.store.setState({clips:[],past:[],future:[],selection:[]})`)
+await ev(`__ove.store.getState().addFromMedia('${A.id}','V1',0)`); await sleep(100)
+await ev(`__ove.store.getState().split(2)`)
+const sc = (await st('s.clips')).filter((c) => c.trackId === 'V1').sort((a, b) => a.start - b.start)
+await ev(`__ove.store.getState().setSpeed(['${sc[0].id}'], 0.25)`)
+const sv = (await st('s.clips')).filter((c) => c.trackId === 'V1').sort((a, b) => a.start - b.start)
+check('slow-down is clamped to next clip', sv[0].start + sv[0].dur <= sv[1].start + 1e-3 && sv[0].speed > 0.25, JSON.stringify([sv[0].speed, sv[0].dur, sv[1].start]))
 done()
