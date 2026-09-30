@@ -34,13 +34,26 @@ Notes:
 - Inspector: volume, fades, volume keyframes, brightness/contrast/saturation, crop/scale/position, speed, transitions; titles have text, font, size, colour, position and duration.
 - Export MP4 (H.264 + AAC) to a path you choose, with a progress bar. Projects save as `.ovep`.
 
+## `ove`: editing from the command line (for AI assistants)
+
+`ove` builds and inspects `.ovep` projects without opening the app, so an AI can do a rough edit and you review it. It prints one short JSON line per command and accepts many commands on stdin.
+
+```
+npm.cmd run ove -- help                       # or: ove.cmd help / node cli/ove.js help
+ove.cmd scenes "D:\OBS Videos\clip.mp4"        # understand: probe, scenes, silence, loud, frames, sheet, transcript
+printf 'new\nimport "D:\\OBS Videos\\clip.mp4"\nadd m1 V1 @0 in=20 dur=30\ncut 10\nsave edit.ovep\n' | node cli/ove.js
+ove.cmd frame -p edit.ovep --at 2,12           # check: composed frames, `preview` (480p MP4), `check` (lint)
+```
+
+Then open `edit.ovep` in the app (Ctrl+O), check it, and export there. `transcript` needs a whisper CLI named in `OVE_WHISPER`.
+
 ## Cache
 
 Thumbnails, waveforms, 960 px proxies (built automatically for HEVC, very large or high-bitrate footage) and export temp files live in `cache/` inside the app folder (override with `OVE_CACHE`). It is capped at 2 GB and the **Clear cache** button empties it. Nothing is written elsewhere except your chosen export/project paths. Source media is never modified.
 
 ## Tests
 
-`npm test` (export with every feature; needs `ffmpeg` on PATH or `FFMPEG_BIN`) and `node test/sync.test.js` (flash/beep A/V sync through cuts and 2x speed).
+`npm test` (export with every feature, plus the `ove` CLI: batch, bad input, round trip; needs `ffmpeg` on PATH or `FFMPEG_BIN`) and `node test/sync.test.js` (flash/beep A/V sync through cuts and 2x speed).
 
 ## Credits
 

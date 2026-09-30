@@ -11,7 +11,8 @@
     "start": "node scripts/start.js",
     "electron": "electron .",
     "typecheck": "tsc --noEmit",
-    "test": "node test/export.test.js"
+    "test": "node test/export.test.js && node test/ove.test.js",
+    "ove": "node cli/ove.js"
   },
   "dependencies": {
     "ffmpeg-static": "^5.3.0",

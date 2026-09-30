@@ -1,0 +1,14 @@
+new
+import "D:\OBS Videos\2023-08-16 23-55-20.mp4"
+add m1 V1 @0 in=20 dur=30
+cut 10
+cut 20
+rm c3 --ripple
+dissolve c5 dur=1
+speed c5 2
+title @1 dur=3 text="SMASH\nHIGHLIGHTS" size=90 color=#ffcc00
+fade c2 in=0.5 out=0.5
+set c1 saturation=1.3 brightness=1.1 crop.l=0.1 scale=0.9
+keys c2 0:0.5,2:1
+check
+show

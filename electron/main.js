@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import crypto from 'node:crypto'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { buildExport } from './exporter.js'
+import { probeFile } from '../shared/probe.js'
 
 const require = createRequire(import.meta.url)
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -38,16 +39,7 @@ function enforceCacheLimit() {
   } catch {}
 }
 
-async function probe(p) {
-  const out = await run(FFPROBE, ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', p])
-  const j = JSON.parse(out.toString())
-  const v = j.streams.find((s) => s.codec_type === 'video')
-  const a = j.streams.find((s) => s.codec_type === 'audio')
-  if (!v) throw new Error('No video stream')
-  const [fn, fd] = (v.avg_frame_rate || v.r_frame_rate || '30/1').split('/').map(Number)
-  const fps = fd ? fn / fd : 30
-  return { path: p, name: path.basename(p), w: v.width, h: v.height, fps, dur: parseFloat(j.format.duration || v.duration), hasAudio: !!a, vcodec: v.codec_name, bitrate: parseInt(j.format.bit_rate || 0), container: j.format.format_name }
-}
+const probe = (p) => probeFile(FFPROBE, p)
 
 const inflight = new Map()
 const once = (k, fn) => { if (!inflight.has(k)) inflight.set(k, fn().finally(() => inflight.delete(k))); return inflight.get(k) }

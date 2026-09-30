@@ -16,12 +16,25 @@ function fontPath(font, fontDir) {
   return `${fontDir}/${file}`.replace(/\\/g, '/').replace(/:/g, '\\:')
 }
 
+/** One-frame view of a project at timeline time `at`: only the visible clips, re-based to 0, with the dissolve alpha frozen. */
+function windowAt(project, at) {
+  const d = 2 / project.fps
+  const clips = []
+  for (const c of project.clips) {
+    if (c.kind === 'audio' || !(c.start <= at + 1e-9 && at < c.start + c.dur - 1e-9)) continue
+    const off = Math.max(0, at - c.start)
+    clips.push({ ...c, start: 0, in: c.in + off * (c.speed || 1), dur: d, transition: 0, transOut: 0, _alpha: c.transition > 0 ? Math.min(1, off / c.transition) : 1 })
+  }
+  return { ...project, clips }
+}
+
 /**
  * Build ffmpeg arguments for a project.
  * project: {width,height,fps,media:{[id]:{path,w,h,dur,hasAudio}},tracks:[{id,kind,muted,hidden}],clips:[...]}
  * Returns {args, script, textFiles:[{path,text}], total}
  */
 export function buildExport(project, outPath, opts = {}) {
+  if (opts.frameAt != null) project = windowAt(project, opts.frameAt)
   const { width: W, height: H, fps } = project
   const fontDir = opts.fontDir || 'C:/Windows/Fonts'
   const tmpDir = opts.tmpDir || '.'
@@ -66,6 +79,7 @@ export function buildExport(project, outPath, opts = {}) {
           `br=${n(a - a * sat)}:bg=${n(b - b * sat)}:bb=${n(d + (1 - d) * sat)}`
       }
       f += ',format=yuva420p'
+      if (c._alpha != null && c._alpha < 1) f += `,colorchannelmixer=aa=${n(c._alpha)}`
       if (c.transition > 0) f += `,fade=t=in:st=0:d=${n(c.transition)}:alpha=1`
       f += `,setpts=PTS+${s}/TB[v${k}]`
       chains.push(f)
@@ -75,6 +89,10 @@ export function buildExport(project, outPath, opts = {}) {
   }
   chains.push(`[${cur}]format=yuv420p[vout]`)
 
+  if (opts.frameAt != null) {
+    const script = chains.join(';\n')
+    return { args: ['-y', '-hide_banner', '-nostats', ...inputs.flat(), '-filter_complex_script', opts.scriptPath || 'filter.txt', '-map', '[vout]', '-frames:v', '1', outPath], script, textFiles, total }
+  }
   const aud = project.clips.filter((c) => c.kind === 'audio' && trackOf(c) && !trackOf(c).muted && project.media[c.mediaId]?.hasAudio)
   chains.push(`anullsrc=r=48000:cl=stereo,atrim=duration=${n(total)},asetpts=PTS-STARTPTS[a0]`)
   const labels = ['[a0]']
@@ -93,7 +111,7 @@ export function buildExport(project, outPath, opts = {}) {
   chains.push(`${labels.join('')}amix=inputs=${labels.length}:normalize=0:duration=longest,atrim=duration=${n(total)}[aout]`)
 
   const script = chains.join(';\n')
-  const enc = opts.nvenc
+  const enc = opts.encArgs ? opts.encArgs : opts.nvenc
     ? ['-c:v', 'h264_nvenc', '-preset', 'p5', '-rc', 'vbr', '-cq', '19', '-b:v', '0']
     : ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18']
   const args = [
