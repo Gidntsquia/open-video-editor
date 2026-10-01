@@ -6,7 +6,10 @@ import { sequenceEnd } from '../shared/math.js'
 import * as P from './project.js'
 import * as U from './probe.js'
 import * as R from './render.js'
-import { Err, fail, tokenize, parseArgs, parseTime, num, atomicWrite, toLocal, toStored, r2, r3 } from './util.js'
+import * as J from './jobs.js'
+import * as C from './cache.js'
+import { setClock, clock, elapsed } from './run.js'
+import { Err, fail, tokenize, parseArgs, parseTime, num, atomicWrite, toLocal, toStored, r2, r3, cacheDir } from './util.js'
 
 const HELP = `ove <cmd> [args] [-p file.ovep]   one command per call, or one per stdin line (batch, one process). Reply: one JSON line.
   ok -> {"ok":1,...}  error -> {"err":"..."}  exit 1 on error. Batch: --stop halts at first error.
@@ -30,16 +33,22 @@ PROJECT (single call: changes auto-save to -p; batch: only on "save")
   undo                               batch only: revert the last changing command
   save [path]                        atomic write
   show [--media] [--json]            header + one line per clip: id track start-end src[in-out] xSpeed volN fx...
-UNDERSTAND (media path or mediaId)
+UNDERSTAND (media path or mediaId) - small bursts: scan first, then zoom with --from/--to
+  scan <m>                           one fast pass: facts, keyframe scene candidates, loudness per 10s, silences, "zoom" hints
   probe <m>                          dur,w,h,fps,audio,vcodec
   scenes <m> [--thr 0.3]             scene-cut seconds
   silence <m> [--db -35 --min 1]     [[start,end],..]
   loud <m> [--top 20 --win 2]        loudest windows [t,peak_db,rms_db]
   frames <m> --every 30s | --at t,t  JPGs <=320px -> cache/ove/
   sheet <m> [--cols 6 --n 36]        one contact-sheet JPG with timestamps
-  transcript <m>                     [{t,d,text}] via OVE_WHISPER (whisper CLI; "{wav}" in it marks the wav arg)
+  transcript <m>                     [{t,d,text}] via OVE_WHISPER (GPU faster-whisper, see README; "{wav}" marks the wav arg)
+  Every probe: --from t --to t (absolute source secs; no range = whole file if <=120s, else first 60s + "more").
+  --budget s  stop after s secs (default 20, transcript/preview 60) -> {"partial":1,"done_to":t,"retry":"..."}; exit 0.
+  --bg        run detached -> {"job":"j1"}; job j1 [--cancel] polls/stops it; jobs lists them (bg budget default 600).
+  Replies carry ms and "cached":1|"part" (results, WAV and a 320p proxy are cached per file in cache/ove/). OVE_DEBUG=1 logs ffmpeg args.
+  Failed batch lines: remaining lines still run, a summary line lists failures; re-piping the same stdin skips finished lines.
 SELF-CHECK
-  frame --at t,t                     the composed timeline frame(s) as PNG (same ffmpeg graph as the app's export)
+  frame --at t,t                     the composed timeline frame(s) as PNG, all in one ffmpeg run (same graph as the app's export)
   preview [-o out.mp4]               480p render of the whole timeline
   check                              lint: gaps, overlaps, reads past media end, missing files, muted/hidden tracks
 Export to MP4 happens in the app: open the .ovep there, review, export.`
@@ -62,8 +71,19 @@ const mediaArg = (s) => {
 }
 async function mediaInfo(s) {
   const { file, m } = mediaArg(s)
-  if (m) return { file, dur: m.dur }
-  const f = await U.facts(file); return { file, dur: f.dur }
+  if (!fs.existsSync(file)) fail(`file not found: ${file}`)
+  const f = m || await U.facts(file)
+  return { file, ref: s, id: C.fid(file), dur: f.dur, w: f.w, h: f.h, fps: f.fps, audio: !!f.hasAudio, size: fs.statSync(file).size }
+}
+const PROBES = new Set(['probe', 'scan', 'scenes', 'silence', 'loud', 'frames', 'sheet', 'transcript'])
+const RETRY = new Set([...PROBES, 'frame', 'preview'])
+const qt = (x) => (x === '' || /[\s"]/.test(x) ? `"${x.replace(/"/g, '\\"')}"` : x)
+function retryLine(tokens, cli, from) {
+  const o = []
+  for (let i = 0; i < tokens.length; i++) { if (tokens[i] === '--bg') continue; if (from != null && tokens[i] === '--from') { i++; continue } o.push(tokens[i]) }
+  if (from != null) o.push('--from', String(from))
+  if (cli.p) o.push('-p', cli.p)
+  return o.map(qt).join(' ')
 }
 const timeList = (s) => String(s).split(',').filter(Boolean).map((x) => parseTime(x))
 
@@ -265,18 +285,21 @@ async function dispatch(cmd, a) {
       if (a.flags.json) return { raw: JSON.stringify(p), wrap: 'project', val: p }
       const lines = P.showLines(p, !!a.flags.media); return { raw: lines.join('\n'), wrap: 'show', val: lines }
     }
-    case 'probe': { const [m] = pos(a, 1, 'probe <media>'); const { file, m: mm } = mediaArg(m); const f = mm || await U.facts(file); return { dur: r2(f.dur), w: f.w, h: f.h, fps: r2(f.fps), audio: f.hasAudio ? 1 : 0, vcodec: f.vcodec, kbps: Math.round(f.bitrate / 1000) } }
-    case 'scenes': { const { file, dur } = await mediaInfo(pos(a, 1, 'scenes <media>')[0]); return U.scenes(file, dur, a.flags.thr != null ? num(a.flags.thr, '--thr') : 0.3) }
-    case 'silence': { const { file, dur } = await mediaInfo(pos(a, 1, 'silence <media>')[0]); return U.silence(file, dur, a.flags.db != null ? num(a.flags.db, '--db') : -35, a.flags.min != null ? num(a.flags.min, '--min') : 1) }
-    case 'loud': { const { file } = await mediaInfo(pos(a, 1, 'loud <media>')[0]); return U.loud(file, a.flags.top != null ? num(a.flags.top, '--top') : 20, a.flags.win != null ? num(a.flags.win, '--win') : 2) }
+    case 'probe': { const [m] = pos(a, 1, 'probe <media>'); const { file, m: mm } = mediaArg(m); const f = mm || await U.facts(file); const r = { dur: r2(f.dur), w: f.w, h: f.h, fps: r2(f.fps), audio: f.hasAudio ? 1 : 0, vcodec: f.vcodec, kbps: Math.round(f.bitrate / 1000) }; if (f.cached) r.cached = 1; return r }
+    case 'scan': { const mi = await mediaInfo(pos(a, 1, 'scan <media>')[0]); const r = await U.scan(mi); r.zoom = r.zoom.map((z) => z.replace('<m>', qt(mi.ref))); return r }
+    case 'scenes': { const mi = await mediaInfo(pos(a, 1, 'scenes <media>')[0]); return U.scenes(mi, U.range(mi.dur, a.flags), a.flags.thr != null ? num(a.flags.thr, '--thr') : 0.3) }
+    case 'silence': { const mi = await mediaInfo(pos(a, 1, 'silence <media>')[0]); return U.silence(mi, U.range(mi.dur, a.flags), a.flags.db != null ? num(a.flags.db, '--db') : -35, a.flags.min != null ? num(a.flags.min, '--min') : 1) }
+    case 'loud': { const mi = await mediaInfo(pos(a, 1, 'loud <media>')[0]); return U.loud(mi, U.range(mi.dur, a.flags), a.flags.top != null ? num(a.flags.top, '--top') : 20, a.flags.win != null ? num(a.flags.win, '--win') : 2) }
     case 'frames': {
-      const { file, dur } = await mediaInfo(pos(a, 1, 'frames <media> --every 30s | --at t,t')[0])
-      if (a.flags.at) return U.frames(file, dur, { at: timeList(a.flags.at) })
+      const mi = await mediaInfo(pos(a, 1, 'frames <media> --every 30s | --at t,t')[0])
+      if (a.flags.at) return U.frames(mi, { from: 0, to: mi.dur }, { at: timeList(a.flags.at) })
       if (!a.flags.every) fail('frames needs --every or --at'); const e = parseTime(a.flags.every, '--every'); if (!(e > 0)) fail('--every must be > 0')
-      return U.frames(file, dur, { every: e })
+      return U.frames(mi, U.range(mi.dur, a.flags), { every: e })
     }
-    case 'sheet': { const { file, dur } = await mediaInfo(pos(a, 1, 'sheet <media>')[0]); return U.sheet(file, dur, a.flags.cols != null ? num(a.flags.cols, '--cols') : 6, a.flags.n != null ? num(a.flags.n, '--n') : 36) }
-    case 'transcript': { const { file } = await mediaInfo(pos(a, 1, 'transcript <media>')[0]); return U.transcript(file) }
+    case 'sheet': { const mi = await mediaInfo(pos(a, 1, 'sheet <media>')[0]); return U.sheet(mi, U.range(mi.dur, a.flags), a.flags.cols != null ? num(a.flags.cols, '--cols') : 6, a.flags.n != null ? num(a.flags.n, '--n') : 36) }
+    case 'transcript': { const mi = await mediaInfo(pos(a, 1, 'transcript <media>')[0]); return U.transcript(mi, U.range(mi.dur, a.flags)) }
+    case 'job': { const [id] = pos(a, 1, 'job <id> [--cancel]'); return J.view(id, !!a.flags.cancel) }
+    case 'jobs': { const l = J.list(); return { n: l.length, jobs: l } }
     case 'frame': { if (!a.flags.at) fail('frame needs --at t[,t]'); return R.frame(need(), timeList(a.flags.at)) }
     case 'preview': return R.preview(need(), a.flags.o ? path.resolve(a.flags.o) : undefined)
     case 'check': { const f = R.check(need()); return { findings: f } }
@@ -288,8 +311,17 @@ async function dispatch(cmd, a) {
 
 /** Run one command line (token array). Returns {line, ok, raw}. */
 async function runOne(tokens, cli) {
-  const cmd = tokens[0]; const a = parseArgs(tokens.slice(1))
+  const t0 = Date.now(); const cmd = tokens[0]; const a = parseArgs(tokens.slice(1))
+  const bg = !!a.flags.bg && (PROBES.has(cmd) || cmd === 'preview')
   try {
+    if (a.flags.budget != null && !(Number(a.flags.budget) > 0)) fail('--budget must be a number of seconds > 0')
+    setClock(a.flags.budget != null ? Number(a.flags.budget) : cmd === 'preview' || cmd === 'transcript' ? 60 : 20); clock.warn = null
+    if (bg) {
+      const needsProj = cmd === 'preview' || /^m\d+$/.test(a.pos[0] || '')
+      if (needsProj && !ctx.file) fail('--bg needs a saved project: pass -p file.ovep (or use a media path)')
+      const jt = tokens.filter((x) => x !== '--bg'); if (a.flags.budget == null) jt.push('--budget', '600'); if (ctx.file) jt.push('-p', ctx.file)
+      return { ok: true, json: { ok: 1, job: J.start(jt, tokens.join(' ')), ms: Date.now() - t0 } }
+    }
     if (cmd === 'new' && cli.p) ctx.file = cli.p
     let r = await dispatch(cmd, a)
     if (MUT.has(cmd) && !ctx.batch && ctx.file && cmd !== 'new') { atomicWrite(ctx.file, P.serialize(ctx.proj)); r = { ...r, saved: 1 } }
@@ -297,11 +329,53 @@ async function runOne(tokens, cli) {
     if (r.raw !== undefined) return { ok: true, raw: r.raw, json: r.wrap ? { ok: 1, [r.wrap]: r.val } : { ok: 1, help: r.raw } }
     if (cmd === 'check' && !ctx.batch) return { ok: true, raw: r.findings.length ? r.findings.map((f) => JSON.stringify(f)).join('\n') : '{"ok":1}', json: null }
     if (cmd === 'check') return { ok: true, json: { ok: 1, n: r.findings.length, f: r.findings } }
-    return { ok: true, json: { ok: 1, ...r } }
+    const { ok: _o, ...rest } = r
+    const json = { ok: 1, ...rest }
+    if (clock.warn) json.warn = clock.warn
+    if (json.partial) json.retry = retryLine(tokens, cli, json.done_to)
+    json.ms = Date.now() - t0; U.flushProxy()
+    return { ok: true, json }
   } catch (e) {
-    if (!(e instanceof Err)) return { ok: false, json: { err: String(e.message || e).split('\n')[0].slice(0, 300) } }
-    return { ok: false, json: { err: e.message } }
+    const json = { err: e instanceof Err ? e.message : String(e.message || e).split('\n')[0].slice(0, 300) }
+    if (e.extra) Object.assign(json, e.extra)
+    if (RETRY.has(cmd)) json.retry = retryLine(tokens, cli, e.extra?.done_to)
+    json.ms = Date.now() - t0; U.flushProxy()
+    return { ok: false, json }
   }
+}
+
+const outputsExist = (j) => {
+  const fs_ = []; if (typeof j.f === 'string') fs_.push(j.f); else if (Array.isArray(j.f)) for (const x of j.f) if (Array.isArray(x) && typeof x[1] === 'string') fs_.push(x[1])
+  return fs_.every((f) => fs.existsSync(f))
+}
+const STATEFUL = (c) => MUT.has(c) || c === 'new' || c === 'undo'
+
+async function batch(text, cli, stop, out) {
+  const ckFile = path.join(cacheDir(), `batch-${C.hash(text + '\0' + (cli.p || ''), 12)}.json`)
+  let ck = {}; try { ck = JSON.parse(fs.readFileSync(ckFile, 'utf8')) } catch {}
+  const next = {}; const failed = []; let n = 0, skipped = 0, dirty = false
+  const lines = text.split(/\r?\n/)
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]; if (!line.trim() || line.trim().startsWith('#')) continue
+    n++
+    const h = C.hash(line); const prev = ck[i]; let r; const t0 = Date.now()
+    let tokens; try { tokens = tokenize(line) } catch (e) { r = { ok: false, json: { err: e.message } } }
+    if (tokens && prev && prev.h === h && prev.ok && !dirty && tokens[0] !== 'save' && outputsExist(prev.json)) {
+      if (STATEFUL(tokens[0])) ctx.history.push(ctx.proj)
+      if (prev.proj !== undefined) { ctx.proj = prev.proj; ctx.sizeLocked = prev.sl }
+      out(JSON.stringify({ ...prev.json, cached: 1, ms: Date.now() - t0 })); next[i] = prev; skipped++
+      continue
+    }
+    if (tokens) { try { r = await runOne(tokens, cli) } catch (e) { r = { ok: false, json: { err: e.message } } } }
+    out(JSON.stringify(r.json || { ok: 1 }))
+    if (!r.ok) failed.push(i + 1)
+    else if (tokens && STATEFUL(tokens[0])) dirty = true
+    next[i] = { h, ok: r.ok, json: r.json || { ok: 1 }, proj: ctx.proj, sl: ctx.sizeLocked }
+    try { atomicWrite(ckFile, JSON.stringify({ ...ck, ...next })) } catch {}
+    if (!r.ok && stop) break
+  }
+  if (failed.length) out(JSON.stringify({ summary: 1, n, ok: n - failed.length, failed, skipped, hint: 're-pipe the same input to rerun only the failed lines' }))
+  return failed.length ? 1 : 0
 }
 
 async function main() {
@@ -309,23 +383,20 @@ async function main() {
   const pi = argv.indexOf('-p'); if (pi >= 0 && argv[pi + 1]) { cli.p = path.resolve(argv[pi + 1]); argv.splice(pi, 2) }
   const stop = argv.includes('--stop'); argv = argv.filter((x) => x !== '--stop')
   const out = (s) => process.stdout.write(s + '\n')
-  let code = 0
+  if (argv[0] === '__proxy') { await U.buildProxy(argv[1], argv[2]); process.exit(0) }
   if (!argv.length && !process.stdin.isTTY) {
     ctx.batch = true
     if (cli.p && fs.existsSync(cli.p)) try { loadFile(cli.p) } catch (e) { out(JSON.stringify({ err: e.message })); process.exit(1) }
     const text = await new Promise((res) => { let b = ''; process.stdin.on('data', (d) => (b += d)); process.stdin.on('end', () => res(b)) })
-    for (const line of text.split(/\r?\n/)) {
-      if (!line.trim() || line.trim().startsWith('#')) continue
-      let r
-      try { r = await runOne(tokenize(line), cli) } catch (e) { r = { ok: false, json: { err: e.message } } }
-      out(JSON.stringify(r.json || { ok: 1 })); if (!r.ok) { code = 1; if (stop) break }
-    }
-    process.exit(code)
+    process.exit(await batch(text, cli, stop, out))
   }
   if (!argv.length) { console.log(HELP); process.exit(0) }
   if (cli.p && fs.existsSync(cli.p) && argv[0] !== 'new') { try { loadFile(cli.p) } catch (e) { out(JSON.stringify({ err: e.message })); process.exit(1) } }
+  const rep = process.env.OVE_JOB ? J.reporter(process.env.OVE_JOB) : null
+  if (rep) clock.onPct = rep.pct
   let r
   try { r = await runOne(argv, cli) } catch (e) { r = { ok: false, json: { err: e.message } } }
+  if (rep) { rep.finish(r.json, r.ok); process.exit(0) }
   if (r.raw !== undefined && r.ok) out(r.raw); else out(JSON.stringify(r.json))
   process.exit(r.ok ? 0 : 1)
 }

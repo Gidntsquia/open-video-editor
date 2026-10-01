@@ -14,3 +14,6 @@
 - Project ops live in `cli/project.js` and mirror `src/store.ts`; change both together. `frame` uses `buildExport({frameAt})`.
 - Under WSL ove uses system ffmpeg (bundled Linux build has no drawtext); ffmpeg 8 draws a box for `\n` in titles, the Windows ffmpeg-static does not. Stored media paths are Windows paths (`D:\...`).
 - Test: `node test/ove.test.js`; app check: `test/scenarios/ove.mjs` (opens `cache/ove/app.ovep` by the Open dialog).
+- ove speed: ranged probes, `scan`, `--budget`, `--bg`/`job`/`jobs`, result cache + WAV + 320p all-intra proxy in `cache/ove/` (`OVE_CACHE` overrides). Code: `cli/run.js` (ffmpeg runner, budget/timeouts), `cli/cache.js`, `cli/jobs.js`, `cli/probe.js`. Debug: `OVE_DEBUG=1` logs every ffmpeg call, `OVE_NO_PROXY=1` stops proxy builds (tests).
+- GPU transcript: `cli/whisper_gpu.py` in a Windows venv (`D:\ove-whisper`: faster-whisper + nvidia-cublas-cu12 + nvidia-cudnn-cu12); `OVE_WHISPER='<venv python> <path>\cli\whisper_gpu.py --model small {wav}'`. Reads the cached 16 kHz WAV, falls back to CPU with `"warn":"cpu"`.
+- Batch: failed lines don't stop the rest; a `{"summary":1,...}` line appears only when a line failed; checkpoints in `cache/ove/batch-<hash>.json`, re-piping skips finished lines.

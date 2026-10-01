@@ -76,7 +76,7 @@ export function tokenize(line) {
   return out
 }
 
-const VALUE_FLAGS = new Set(['-w', '-h', '-fps', '-p', '-o', '--every', '--at', '--cols', '--n', '--thr', '--db', '--min', '--top', '--win'])
+const VALUE_FLAGS = new Set(['-w', '-h', '-fps', '-p', '-o', '--every', '--at', '--cols', '--n', '--thr', '--db', '--min', '--top', '--win', '--from', '--to', '--budget'])
 /** -> {pos:[], kv:{}, flags:{}} ; `k=v` named, `-x v`/`--x v` value flags, other `--x` booleans, `@t` start. */
 export function parseArgs(tokens) {
   const a = { pos: [], kv: {}, flags: {}, at: undefined }
