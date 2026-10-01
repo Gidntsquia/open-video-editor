@@ -121,11 +121,25 @@ export async function scenes(mi, rg, thr = 0.3) {
     id: mi.id, kind: 'scenes', args: `thr=${thr}`, a: rg.from, b: rg.to,
     async compute(a, b) {
       const a0 = a > 0 ? Math.max(0, a - 0.25) : 0
-      const r = await ff(['-skip_loop_filter', 'all', '-flags2', '+fast', '-ss', a0, '-to', b, '-i', vi.path, '-an', '-vf', `scale=320:-2:flags=fast_bilinear,select='gt(scene,${thr})',showinfo`, '-f', 'null', '-'], { onProgress: (t) => pct(rg.from, rg.to)(a0 + t) })
+      // proxy compression shifts scores a little: the proxy proposes candidates at a lower threshold, clear hits are kept, borderline ones are confirmed on the source
+      const pthr = vi.proxy ? thr * 0.8 : thr
+      const r = await ff(['-skip_loop_filter', 'all', '-flags2', '+fast', '-ss', a0, '-to', b, '-i', vi.path, '-an', '-vf', `scale=320:-2:flags=fast_bilinear,select='gt(scene,${pthr})',${vi.proxy ? 'metadata=print' : 'showinfo'}`, '-f', 'null', '-'], { onProgress: (t) => pct(rg.from, rg.to)(a0 + t) })
       if (r.stopped === 'timeout') return { timeout: 1 }
-      const t = []
-      for (const m of r.err.matchAll(/pts_time:([\d.]+)/g)) { const v = a0 + parseFloat(m[1]); if (v >= a - 1e-6) t.push(r2(v)) }
-      return { items: t, to: progressTo(r, a0, b) }
+      let t = []; const edge = []
+      if (vi.proxy) {
+        for (const m of r.err.matchAll(/pts_time:([\d.]+)[^\n]*\n[^\n]*scene_score=([\d.]+)/g)) { const v = r2(a0 + parseFloat(m[1])); if (v < a - 1e-6) continue; if (parseFloat(m[2]) >= thr * 1.15) t.push(v); else edge.push(v) }
+      } else for (const m of r.err.matchAll(/pts_time:([\d.]+)/g)) { const v = a0 + parseFloat(m[1]); if (v >= a - 1e-6) t.push(r2(v)) }
+      let to = progressTo(r, a0, b)
+      if (edge.length) {
+        for (const c of edge) {
+          if (left() <= 0 && c - 0.01 > a) { to = Math.min(to, c - 0.01); break }
+          const s0 = Math.max(0, c - 1.5)
+          const q = await ff(['-ss', s0, '-to', c + 0.6, '-i', mi.file, '-an', '-vf', `scale=320:-2:flags=fast_bilinear,select='gt(scene,${thr})',showinfo`, '-f', 'null', '-'], { budget: false })
+          if ([...q.err.matchAll(/pts_time:([\d.]+)/g)].some((m) => Math.abs(s0 + parseFloat(m[1]) - c) <= 0.5)) t.push(c)
+        }
+        t = t.filter((v) => v <= to + 1e-6).sort((x, y) => x - y)
+      }
+      return { items: t, to }
     },
     merge(old, add) { const all = [...old, ...add].sort((p, q) => p - q); const o = []; for (const v of all) if (!o.length || v - o[o.length - 1] > 0.5) o.push(v); return o },
     query(items, a, b) { const t = items.filter((v) => v >= a - 1e-6 && v <= b + 1e-6); return { n: t.length, t } },
