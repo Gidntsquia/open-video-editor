@@ -132,7 +132,7 @@ export async function scenes(mi, rg, thr = 0.3) {
       let to = progressTo(r, a0, b)
       if (edge.length) {
         for (const c of edge) {
-          if (left() <= 0 && c - 0.01 > a) { to = Math.min(to, c - 0.01); break }
+          if (left() <= 0 && c - 0.01 > a + 1) { to = Math.min(to, c - 0.01); break }
           const s0 = Math.max(0, c - 1.5)
           const q = await ff(['-ss', s0, '-to', c + 0.6, '-i', mi.file, '-an', '-vf', `scale=320:-2:flags=fast_bilinear,select='gt(scene,${thr})',showinfo`, '-f', 'null', '-'], { budget: false })
           if ([...q.err.matchAll(/pts_time:([\d.]+)/g)].some((m) => Math.abs(s0 + parseFloat(m[1]) - c) <= 0.5)) t.push(c)
