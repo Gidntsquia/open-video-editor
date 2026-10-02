@@ -11,7 +11,7 @@
     "start": "node scripts/start.js",
     "electron": "electron .",
     "typecheck": "tsc --noEmit",
-    "test": "node test/export.test.js && node test/ove.test.js",
+    "test": "node test/export.test.js && node test/ove.test.js && node test/trans.test.js",
     "ove": "node cli/ove.js"
   },
   "dependencies": {
