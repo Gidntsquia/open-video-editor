@@ -8,6 +8,7 @@ import { Readable } from 'node:stream'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { buildExport } from './exporter.js'
 import { probeFile } from '../shared/probe.js'
+import { startControl } from './control.js'
 
 const require = createRequire(import.meta.url)
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -174,6 +175,7 @@ function createWindow() {
   })
   if (process.env.OVE_INACTIVE) win.once('ready-to-show', () => win.showInactive())
   if (process.env.VITE_DEV) win.loadURL('http://localhost:5173'); else win.loadFile(path.join(root, 'dist', 'index.html'))
+  return win
 }
 
 app.whenReady().then(() => {
@@ -197,6 +199,8 @@ app.whenReady().then(() => {
     const stream = fs.createReadStream(p, { start, end })
     return new Response(Readable.toWeb(stream), { status, headers: h })
   })
-  createWindow()
+  const win = createWindow()
+  const ctl = startControl(CACHE, () => win)
+  app.on('will-quit', ctl.cleanup)
 })
 app.on('window-all-closed', () => app.quit())

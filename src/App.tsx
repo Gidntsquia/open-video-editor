@@ -255,7 +255,16 @@ export default function App() {
   const [showPrefs, setShowPrefs] = useState(false)
 
   useEffect(() => {
-    window.__ove = { store: useStore, engine, importPaths }
+    window.__ove = { store: useStore, engine, importPaths,
+      // control channel (electron/control.js): load a parsed .ovep, then show it
+      openData: (data: any, path: string | null) => { engine.pause(); useStore.getState().loadProject(data, path); Object.values(useStore.getState().media).forEach((m) => loadAssets(m as Media)) },
+      // preview canvas as a JPEG data URL, longest side <= 512 px
+      capture: () => {
+        const cv = engine.canvas; if (!cv) return null
+        const k = Math.min(1, 512 / Math.max(cv.width, cv.height)); const o = document.createElement('canvas')
+        o.width = Math.round(cv.width * k); o.height = Math.round(cv.height * k)
+        o.getContext('2d')!.drawImage(cv, 0, 0, o.width, o.height); return o.toDataURL('image/jpeg', 0.7)
+      } }
     const unsub = useStore.subscribe((s, p) => { if (s.clips !== p.clips || s.tracks !== p.tracks || s.media !== p.media || s.width !== p.width || s.height !== p.height) engine.invalidate() })
     return unsub
   }, [])

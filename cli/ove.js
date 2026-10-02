@@ -10,6 +10,7 @@ import * as R from './render.js'
 import * as J from './jobs.js'
 import * as C from './cache.js'
 import { setClock, clock, elapsed } from './run.js'
+import { fileURLToPath } from 'node:url'
 import { Err, fail, tokenize, parseArgs, parseTime, num, atomicWrite, toLocal, toStored, r2, r3, cacheDir } from './util.js'
 
 const HELP = `ove <cmd> [args] [-p file.ovep]   one command per call, or one per stdin line (batch, one process). Reply: one JSON line.
@@ -292,7 +293,7 @@ async function dispatch(cmd, a) {
       return { size: `${ctx.proj.width}x${ctx.proj.height}`, fps: ctx.proj.fps }
     }
     case 'undo': {
-      if (!ctx.batch) fail('undo works only in batch mode')
+      if (!ctx.batch && !ctx.keep) fail('undo works only in batch mode')
       if (!ctx.history.length) fail('nothing to undo'); ctx.proj = ctx.history.pop(); return {}
     }
     case 'save': {
@@ -420,4 +421,5 @@ async function main() {
   if (r.raw !== undefined && r.ok) out(r.raw); else out(JSON.stringify(r.json))
   process.exit(r.ok ? 0 : 1)
 }
-main()
+export { runOne, ctx, HELP, MUT, loadFile }
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main()
