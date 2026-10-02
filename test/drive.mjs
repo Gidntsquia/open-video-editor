@@ -18,11 +18,12 @@ const mouse = (type, x, y, extra = {}) => send('Input.dispatchMouseEvent', { typ
 export const move = (x, y) => send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, buttons: 0 })
 export const click = async (x, y, o = {}) => { await move(x, y); await mouse('mousePressed', x, y, o); await mouse('mouseReleased', x, y, o) }
 export const rclick = async (x, y) => { await move(x, y); await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'right', buttons: 2, clickCount: 1 }); await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'right', buttons: 0, clickCount: 1 }) }
-export const drag = async (x0, y0, x1, y1, steps = 12) => {
-  await move(x0, y0); await mouse('mousePressed', x0, y0)
-  for (let i = 1; i <= steps; i++) { await mouse('mouseMoved', x0 + ((x1 - x0) * i) / steps, y0 + ((y1 - y0) * i) / steps); await sleep(15) }
-  await mouse('mouseReleased', x1, y1)
+export const drag = async (x0, y0, x1, y1, steps = 12, extra = {}) => {
+  await move(x0, y0); await mouse('mousePressed', x0, y0, extra)
+  for (let i = 1; i <= steps; i++) { await mouse('mouseMoved', x0 + ((x1 - x0) * i) / steps, y0 + ((y1 - y0) * i) / steps, extra); await sleep(15) }
+  await mouse('mouseReleased', x1, y1, extra)
 }
+export const ctrlDrag = (x0, y0, x1, y1) => drag(x0, y0, x1, y1, 12, { modifiers: 2 })
 export const wheel = (x, y, dy, modifiers = 2) => send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: 0, deltaY: dy, modifiers })
 const VK = { Delete: 46, Backspace: 8, ArrowLeft: 37, ArrowRight: 39, ArrowUp: 38, ArrowDown: 40, Home: 36, End: 35, ' ': 32, '=': 187, '-': 189 }
 export const key = async (k, mods = []) => {

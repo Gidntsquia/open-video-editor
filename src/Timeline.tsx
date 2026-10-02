@@ -232,7 +232,8 @@ export function Timeline() {
       if (!started && Math.abs(ev.clientX - cx) < 3) return
       const S = useStore.getState()
       if (!started) { S.pushHistory(); started = true }
-      const t = snapTo(timeAt(ev.clientX), pts)
+      // move the edge by the pointer's travel (grabbing 2 px inside the handle must not shift the edge by 2 px)
+      const t = snapTo(cut0 + timeAt(ev.clientX) - timeAt(cx), pts)
       const next = roll ? rollEdge(orig, S.media, S.fps, ed.a, ed.b, t - cut0) : trimEdge(orig, S.media, S.fps, c.id, edge, t, ripple)
       useStore.setState({ clips: next, dirty: true, selection: grp, selEdge: null, popup: null })
     }

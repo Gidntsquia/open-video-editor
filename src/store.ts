@@ -233,14 +233,14 @@ export const useStore = create<State>((set, get) => {
       const hits = s.clips.filter((c) => t > c.start + eps && t < c.start + c.dur - eps && (!s.selection.length || s.group(s.selection).includes(c.id)))
       if (!hits.length) return
       get().pushHistory()
-      const H = new Map(hits.map((c) => [c.id, c])); const trs = new Map<string, number>()
+      const H = new Map(hits.map((c) => [c.id, c]))
       const cutOf = (c: Clip) => (side === 'start' ? t - c.start : c.start + c.dur - t)
-      for (const c of hits) trs.set(c.trackId, Math.max(trs.get(c.trackId) ?? 0, cutOf(c)))
+      // ripple: everything after the trimmed clips moves up by the removed length, on every track (like a Ctrl-drag trim)
+      const sh = Math.max(...hits.map(cutOf)), after = Math.min(...hits.map((x) => x.start + x.dur))
       set((st) => ({ dirty: true, clips: st.clips.map((c) => {
         const h = H.get(c.id)
         if (h) { const cut = cutOf(h); return side === 'start' ? { ...clearIn(h), in: h.in + cut * h.speed, dur: h.dur - cut, fadeIn: 0, keys: h.keys.map((k) => ({ t: k.t - cut, v: k.v })) } : { ...clearOut(h), dur: h.dur - cut, fadeOut: 0 } }
-        const sh = trs.get(c.trackId)
-        return sh && c.start >= Math.min(...hits.filter((x) => x.trackId === c.trackId).map((x) => x.start + x.dur)) - 1e-6 ? { ...c, start: c.start - sh } : c
+        return c.start >= after - 1e-6 ? { ...c, start: c.start - sh } : c
       }) }))
     },
     unlink: (ids) => {

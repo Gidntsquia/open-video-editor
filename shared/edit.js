@@ -101,20 +101,17 @@ export function applyEdge(clips0, media, fps, edge, opts) {
   const wantAudio = (c) => c.kind !== 'audio' || audioOnly || opts.alsoAudio !== false
 
   if (a && b) {
+    // Split the requested length over the cut by the alignment (in whole frames), then shorten each half to the
+    // spare media on its side: a centred 1 s cut whose incoming clip starts at source 0 keeps the 0.5 s before the cut.
     const ha = handlesOf(a, media), hb = handlesOf(b, media)
-    let al = align0
-    const fa = (x) => 1 - x, fb = (x) => x
-    const lim = (x) => Math.min(req, fa(x) > 0 ? ha.tail / fa(x) : Infinity, fb(x) > 0 ? hb.head / fb(x) : Infinity, a.dur + (a.transOut || 0), b.dur)
-    let d = lim(al)
-    if (d < 1 / fps - 1e-6) {
-      // no media on one side: use only the side that has some (Premiere shortens the same way)
-      if (hb.head < EPS && ha.tail >= EPS) { al = 0; d = Math.min(req * fa(align0), ha.tail, a.dur, b.dur) }
-      else if (ha.tail < EPS && hb.head >= EPS) { al = 1; d = Math.min(req * fb(align0), hb.head, a.dur, b.dur) }
-      else if (ha.tail < EPS && hb.head < EPS) return { error: 'Insufficient media: no spare frames on either side of this cut' }
-    }
-    d = Math.floor(d * fps + 1e-6) / fps
-    if (d < 1 / fps - 1e-6) return { error: 'Insufficient media: not even one frame of overlap is possible' }
-    const ep = fa(al) * d, ec = fb(al) * d
+    const F = (x) => Math.floor(x * fps + 1e-6)
+    const reqF = Math.round(req * fps)
+    let epF = Math.min(Math.round(reqF * (1 - align0)), F(ha.tail)), ecF = Math.min(reqF - Math.round(reqF * (1 - align0)), F(hb.head))
+    const capF = F(Math.min(a.dur + (a.transOut || 0), b.dur))
+    if (epF + ecF > capF) { const k = capF / (epF + ecF); epF = Math.floor(epF * k); ecF = Math.min(capF - epF, Math.floor(ecF * k)) }
+    const dF = epF + ecF
+    if (dF < 1) return { error: 'Insufficient media: no spare frames on either side of this cut' }
+    const d = dF / fps, ep = epF / fps, ec = ecF / fps, al = ecF / dF
     const ga = grp(a), gb = grp(b)
     clips = clips.map((c) => {
       if (ga.includes(c.id)) { const w = wantAudio(c); return strip({ ...c, dur: c.dur + ep, transOut: d, transOutType: w ? typeFor(c) : 'none', transOutSolo: undefined }) }
