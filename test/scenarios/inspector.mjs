@@ -34,9 +34,11 @@ await key('z', ['ctrl']); await key('z', ['ctrl']);
 c1 = (await clips()).find((c) => c.id === cs[1].id); check('Ctrl+Z undoes inspector edits stepwise', c1.speed === 1, `speed ${c1.speed} scale ${c1.scale}`)
 // dissolve button
 const btn = async (text) => JSON.parse(await ev(`(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.textContent.includes(${JSON.stringify(text)}));if(!b)return 'null';b.scrollIntoView();const r=b.getBoundingClientRect();return JSON.stringify({x:r.x,y:r.y,w:r.width,h:r.height})})()`))
+// the 3.58 s source clips have no spare frames, so give the first clip a handle (trim 1 s off its end) before the transition
+await ev(`__ove.store.setState((s)=>({clips:s.clips.map((c)=>c.link===${JSON.stringify(cs[0].link)}?{...c,dur:c.dur-1}:c)}))`)
 await pick(cs[1])
-let d = await btn('Cross-dissolve'); await click(d.x + 10, d.y + 8)
-c1 = (await clips()).find((c) => c.id === cs[1].id); check('Cross-dissolve button adds transition', c1.transition > 0, `transition ${c1.transition}`)
+let d = await btn('Add default transition in'); await click(d.x + 10, d.y + 8)
+c1 = (await clips()).find((c) => c.id === cs[1].id); check('Default transition button adds transition', c1.transition > 0, `transition ${c1.transition}`)
 // + Title via toolbar button
 const tb = await btn('+ Title'); await click(tb.x + 10, tb.y + 8)
 const tt = (await clips()).find((c) => c.kind === 'title'); check('+ Title adds a title clip and selects it', !!tt && (await st('s.selection'))[0] === tt.id)

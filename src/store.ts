@@ -145,9 +145,11 @@ export const useStore = create<State>((set, get) => {
           let link = c.link
           if (c.link && i > 0) { if (!links.has(c.link + i)) links.set(c.link + i, uid('l')); link = links.get(c.link + i) }
           const cut = a - c.start
-          out.push({ ...structuredClone(c), id: i === 0 ? c.id : uid('c'), link, start: a, in: c.in + cut * c.speed, dur: b - a,
-            keys: c.keys.map((k) => ({ t: k.t - cut, v: k.v })), fadeIn: a > c.start + eps ? 0 : c.fadeIn, fadeOut: b < end - eps ? 0 : c.fadeOut,
-            ...(a > c.start + eps ? clearIn(c) : {}), ...(b < end - eps ? clearOut(c) : {}) })
+          let n: Clip = { ...structuredClone(c), id: i === 0 ? c.id : uid('c'), link, start: a, in: c.in + cut * c.speed, dur: b - a,
+            keys: c.keys.map((k) => ({ t: k.t - cut, v: k.v })), fadeIn: a > c.start + eps ? 0 : c.fadeIn, fadeOut: b < end - eps ? 0 : c.fadeOut }
+          if (a > c.start + eps) n = clearIn(n)
+          if (b < end - eps) n = clearOut(n)
+          out.push(n)
         })
       }
       set({ clips: out, dirty: true })
