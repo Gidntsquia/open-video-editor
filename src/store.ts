@@ -35,6 +35,9 @@ export type State = {
   selection: string[]
   tool: Tool
   selEdge: Edge | null
+  popup: { x: number; y: number; edge: Edge } | null
+  fourUp: { clipId: string; mode: 'slip' | 'slide' } | null
+  setPopup: (p: { x: number; y: number; edge: Edge } | null) => void
   prefs: Prefs
   zoom: number // px per second
   snap: boolean
@@ -88,13 +91,14 @@ export const useStore = create<State>((set, get) => {
   const snap = (): Snap => ({ clips: structuredClone(get().clips), media: get().media })
   return {
     media: {}, thumbs: {}, waves: {}, tracks: TRACKS, clips: [], width: 1920, height: 1080, fps: 30,
-    playhead: 0, playing: false, selection: [], binSel: [], tool: 'select', selEdge: null, prefs: loadPrefs(), zoom: 60, snap: true,
+    playhead: 0, playing: false, selection: [], binSel: [], tool: 'select', selEdge: null, popup: null, fourUp: null, prefs: loadPrefs(), zoom: 60, snap: true,
     past: [], future: [], lastEdit: { key: '', t: 0 }, projectPath: null, dirty: false, status: 'Ready',
     setStatus: (status) => set({ status }),
     setPlayhead: (playhead) => set({ playhead: Math.max(0, playhead) }),
-    setSelection: (selection) => set((s) => ({ selection, binSel: selection.length ? [] : s.binSel })),
+    setSelection: (selection) => set((s) => ({ selection, selEdge: selection.length ? null : s.selEdge, popup: selection.length ? null : s.popup, binSel: selection.length ? [] : s.binSel })),
     setTool: (tool) => set({ tool }),
-    setSelEdge: (selEdge) => set({ selEdge }),
+    setSelEdge: (selEdge) => set({ selEdge, popup: selEdge ? get().popup : null }),
+    setPopup: (popup) => set({ popup }),
     setPrefs: (p) => { const prefs = { ...get().prefs, ...p }; try { localStorage.setItem('ove.prefs', JSON.stringify(prefs)) } catch {} set({ prefs }) },
     setZoom: (zoom) => set({ zoom: Math.min(600, Math.max(0.1, zoom)) }),
     pushHistory: (key) => {
@@ -104,7 +108,7 @@ export const useStore = create<State>((set, get) => {
     },
     undo: () => {
       const s = get(); const p = s.past[s.past.length - 1]; if (!p) return
-      set({ past: s.past.slice(0, -1), future: [...s.future, snap()], clips: p.clips, media: p.media, lastEdit: { key: '', t: 0 }, dirty: true,
+      set({ past: s.past.slice(0, -1), future: [...s.future, snap()], selEdge: null, popup: null, clips: p.clips, media: p.media, lastEdit: { key: '', t: 0 }, dirty: true,
         selection: s.selection.filter((id) => p.clips.some((c) => c.id === id)) })
     },
     redo: () => {
@@ -275,7 +279,7 @@ export const useStore = create<State>((set, get) => {
       const r = applyEdge(s.clips, s.media, s.fps, edge, { type, dur, align: o.align ?? 0.5, audioType: s.prefs.audioType, alsoAudio: o.alsoAudio ?? s.prefs.alsoAudio })
       if (r.error) { set({ status: r.error }); return { ok: false, msg: r.error } }
       get().pushHistory()
-      const msg = r.short ? `Insufficient media: shortened to ${r.dur.toFixed(2)} s` : `Transition ${r.dur.toFixed(2)} s`
+      const msg = r.short ? `Insufficient media: shortened to ${(r.dur ?? 0).toFixed(2)} s` : `Transition ${(r.dur ?? 0).toFixed(2)} s`
       set({ clips: r.clips, dirty: true, status: msg })
       return { ok: true, dur: r.dur, req: r.req, short: r.short, msg }
     },
@@ -316,7 +320,7 @@ export const useStore = create<State>((set, get) => {
     toggleTrack: (id, what) => set((s) => ({ tracks: s.tracks.map((t) => (t.id === id ? { ...t, [what]: !t[what] } : t)), dirty: true })),
     serialize: () => { const s = get(); return { version: 1, width: s.width, height: s.height, fps: s.fps, media: s.media, tracks: s.tracks, clips: s.clips } },
     loadProject: (d, path) => set({
-      media: d.media || {}, tracks: d.tracks || TRACKS, clips: migrateClips(d.clips || []), selEdge: null, width: d.width, height: d.height, fps: d.fps,
+      media: d.media || {}, tracks: d.tracks || TRACKS, clips: migrateClips(d.clips || []), selEdge: null, popup: null, width: d.width, height: d.height, fps: d.fps,
       playhead: 0, selection: [], binSel: [], past: [], future: [], projectPath: path, dirty: false, thumbs: {}, waves: {},
     }),
   }

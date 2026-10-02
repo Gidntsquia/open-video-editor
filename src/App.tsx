@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useStore, uid } from './store'
 import { engine, makeProxy } from './engine'
 import { Timeline, fmtTime, tlApi } from './Timeline'
+import { EffectsPanel, TransitionPopup, TransitionInspector, PrefsDialog, FourUp, typeName } from './Transitions'
+import { edgeOf, edgeInfo } from '../shared/edit.js'
 import type { Clip, Media } from './types'
 import { FONTS, sequenceEnd } from '../shared/math.js'
 
@@ -83,6 +85,16 @@ function Bin() {
   )
 }
 
+function LeftPanel() {
+  const [tab, setTab] = useState<'bin' | 'effects'>('bin')
+  return (
+    <div className="leftpanel">
+      <div className="tabs"><button className={tab === 'bin' ? 'on' : ''} onClick={() => setTab('bin')} data-tab="bin">Bin</button><button className={tab === 'effects' ? 'on' : ''} onClick={() => setTab('effects')} data-tab="effects">Effects</button></div>
+      {tab === 'bin' ? <Bin /> : <EffectsPanel />}
+    </div>
+  )
+}
+
 function Timecode() {
   const t = useStore((s) => s.playhead); const fps = useStore((s) => s.fps)
   return <span className="tc">{fmtTime(t, fps)}</span>
@@ -137,8 +149,10 @@ function Inspector() {
   const clips = useStore((s) => s.clips)
   const playhead = useStore((s) => s.playhead)
   const S = useStore.getState
+  const selEdge = useStore((s) => s.selEdge)
   const c = clips.find((x) => x.id === sel[0])
   const [kv, setKv] = useState(1)
+  if (selEdge && !c) return <TransitionInspector edge={selEdge} />
   if (!c) return <div className="panel inspector"><div className="ptitle">Inspector</div><div className="hint">Select a clip to edit it.</div></div>
   const ids = sel
   const set = (p: Partial<Clip>) => S().setProps(ids, p)
@@ -164,17 +178,17 @@ function Inspector() {
           <Num label="Position Y" value={c.posY} min={-1080} max={1080} step={1} unit="px" onChange={(v) => set({ posY: v })} />
           <h4>Transition</h4>
           <div className="row">
-            <button onClick={() => S().addTransition(c.id, 1)}>Cross-dissolve in (1s)</button>
-            {c.transition > 0 && <button onClick={() => S().removeTransition(c.id)}>Remove</button>}
+            <button onClick={() => S().setTransition(edgeOf(S().clips, c.id, 'l')!, { align: 0 })}>Add default transition in</button>
+            {c.transition > 0 && <button onClick={() => S().removeTransition(edgeOf(S().clips, c.id, 'l')!)}>Remove</button>}
           </div>
-          {c.transition > 0 && <Num label="Duration" value={c.transition} min={0.1} max={Math.max(0.2, c.dur)} step={0.05} unit="s" onChange={(v) => setLinked({ transition: v })} />}
+          {c.transition > 0 && <div className="hint">{typeName(c.transType)} {c.transition.toFixed(2)} s{(c.transReq ?? c.transition) > c.transition + 1e-6 ? <span className="twarn"> · Insufficient media: shortened to {c.transition.toFixed(2)} s</span> : ''} <a onClick={() => S().setSelEdge(edgeOf(S().clips, c.id, 'l')!)}>edit</a></div>}
         </>}
         {c.kind === 'audio' && <>
           <h4>Audio</h4>
           <Num label="Volume" value={c.volume} min={0} max={2} step={0.01} onChange={(v) => set({ volume: v })} />
           <Num label="Fade in" value={c.fadeIn} min={0} max={Math.max(0.1, c.dur)} step={0.05} unit="s" onChange={(v) => set({ fadeIn: v })} />
           <Num label="Fade out" value={c.fadeOut} min={0} max={Math.max(0.1, c.dur)} step={0.05} unit="s" onChange={(v) => set({ fadeOut: v })} />
-          {c.transition > 0 && <div className="hint">Crossfade {c.transition.toFixed(2)}s (from the video dissolve).</div>}
+          {c.transition > 0 && <div className="hint">Crossfade in: {typeName(c.transType)} {c.transition.toFixed(2)} s</div>}
           <h4>Volume keyframes</h4>
           <div className="row">
             <input type="number" min={0} max={2} step={0.05} value={kv} onChange={(e) => setKv(+e.target.value)} style={{ width: 60 }} />
@@ -238,6 +252,7 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
 export default function App() {
   const st = useStore()
   const [showExport, setShowExport] = useState(false)
+  const [showPrefs, setShowPrefs] = useState(false)
 
   useEffect(() => {
     window.__ove = { store: useStore, engine, importPaths }
@@ -276,6 +291,7 @@ export default function App() {
       if (m === 'save') save(false)
       if (m === 'saveas') save(true)
       if (m === 'export') setShowExport(true)
+      if (m === 'prefs') setShowPrefs(true)
     })
   }, [])
 
@@ -293,8 +309,9 @@ export default function App() {
       else if (ctrl && k === 'c') S.copy(S.selection)
       else if (ctrl && k === 'x') { if (S.copy(S.selection)) S.remove(S.selection, false) }
       else if (ctrl && k === 'v') S.paste(S.playhead)
+      else if (ctrl && e.shiftKey && k === 'k') S.split(S.playhead)
       else if (ctrl && k === 'k') S.split(S.playhead, S.selection.length ? S.selection : undefined)
-      else if (ctrl && k === 'd') { const c = S.clips.find((x) => x.id === S.selection[0]); if (c) S.addTransition(c.id, 1) }
+      else if (ctrl && k === 'd') S.applyDefault(e.shiftKey ? 'audio' : 'video')
       else if (ctrl) used = false
       else if (k === ' ') engine.toggle()
       else if (k === 'k') engine.pause()
@@ -302,10 +319,17 @@ export default function App() {
       else if (k === 'j') { engine.pause(); engine.play(-1) }
       else if (k === 'q') S.rippleTrim(S.playhead, 'start')
       else if (k === 'w') S.rippleTrim(S.playhead, 'end')
-      else if (k === 'escape') { S.setSelection([]); S.setBinSel([]) }
+      else if (k === ',') S.nudge(S.selection, e.key === '<' || e.shiftKey ? -5 : -1)
+      else if (k === '.') S.nudge(S.selection, e.key === '>' || e.shiftKey ? 5 : 1)
+      else if (k === 'b') S.setTool('ripple')
+      else if (k === 'n') S.setTool('roll')
+      else if (k === 'y') S.setTool('slip')
+      else if (k === 'u') S.setTool('slide')
+      else if (k === 'escape') { S.setPopup(null); S.setSelEdge(null); S.setSelection([]); S.setBinSel([]) }
       else if (k === '\\') S.setZoom(Math.max(0.1, (window.innerWidth - 300) / Math.max(5, sequenceEnd(S.clips) * 1.05)))
       else if (k === 'v') S.setTool('select')
       else if (k === 'c') S.setTool('razor')
+      else if ((k === 'delete' || k === 'backspace') && S.selEdge && !S.selection.length) { if (edgeInfo(S.clips, S.selEdge)) S.removeTransition(S.selEdge) }
       else if (k === 'delete' || k === 'backspace') { if (S.binSel.length && !S.selection.length) S.removeMedia(S.binSel); else S.remove(S.selection, e.shiftKey) }
       else if (k === 'arrowleft') { engine.pause(); engine.seek(S.playhead - (e.shiftKey ? 5 : 1) / fps) }
       else if (k === 'arrowright') { engine.pause(); engine.seek(S.playhead + (e.shiftKey ? 5 : 1) / fps) }
@@ -337,6 +361,10 @@ export default function App() {
         <span className="sep" />
         <button className={st.tool === 'select' ? 'on' : ''} title="Selection tool (V)" onClick={() => st.setTool('select')}>V Select</button>
         <button className={st.tool === 'razor' ? 'on' : ''} title="Razor tool (C)" onClick={() => st.setTool('razor')}>C Razor</button>
+        <button className={st.tool === 'ripple' ? 'on' : ''} title="Ripple Edit tool (B)" onClick={() => st.setTool('ripple')}>B Ripple</button>
+        <button className={st.tool === 'roll' ? 'on' : ''} title="Rolling Edit tool (N)" onClick={() => st.setTool('roll')}>N Roll</button>
+        <button className={st.tool === 'slip' ? 'on' : ''} title="Slip tool (Y)" onClick={() => st.setTool('slip')}>Y Slip</button>
+        <button className={st.tool === 'slide' ? 'on' : ''} title="Slide tool (U)" onClick={() => st.setTool('slide')}>U Slide</button>
         <button title="Cut at playhead (Ctrl+K)" onClick={() => st.split(st.playhead, st.selection.length ? st.selection : undefined)}>Cut (Ctrl+K)</button>
         <button title="Delete leaving a gap (Delete)" onClick={() => st.remove(st.selection, false)}>Delete</button>
         <button title="Ripple delete (Shift+Delete)" onClick={() => st.remove(st.selection, true)}>Ripple delete</button>
@@ -349,10 +377,13 @@ export default function App() {
         <CacheBtn />
         <button className="primary" onClick={() => setShowExport(true)}>Export…</button>
       </div>
-      <div className="main"><Bin /><Preview /><Inspector /></div>
+      <div className="main"><LeftPanel /><Preview /><Inspector /></div>
       <Timeline />
       <div className="status">{st.status}{st.projectPath ? ` · ${st.projectPath}` : ''}{st.dirty ? ' · unsaved' : ''}</div>
       {showExport && <ExportDialog onClose={() => setShowExport(false)} />}
+      {showPrefs && <PrefsDialog onClose={() => setShowPrefs(false)} />}
+      <TransitionPopup />
+      <FourUp />
     </div>
   )
 }

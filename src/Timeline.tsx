@@ -1,11 +1,14 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from './store'
 import { engine } from './engine'
 import type { Clip } from './types'
-import { clipEnd, sequenceEnd } from '../shared/math.js'
+import { clipEnd, sequenceEnd, isAudioType } from '../shared/math.js'
+import { edgeOf, cutOf, edgeInfo, applyEdge, transitionBlocks, trimEdge, rollEdge, slipClip, slideClip } from '../shared/edit.js'
+import { typeName } from './Transitions'
+import type { Edge } from './store'
 
 export const LABEL_W = 70
-export const tlApi: { dropMedia?: (id: string, x: number, y: number) => boolean } = {}
+export const tlApi: { dropMedia?: (id: string, x: number, y: number) => boolean; dropEffect?: (id: string, x: number, y: number) => boolean; setFxDrag?: (id: string | null) => void; fxHover?: (x: number, y: number) => void } = {}
 const ROW_H = 58
 
 function fmtTime(t: number, fps: number) {
@@ -38,7 +41,7 @@ function Waveform({ clip }: { clip: Clip }) {
   return <canvas ref={ref} className="wave" style={{ width: clip.dur * zoom }} />
 }
 
-function ClipView({ clip, onDown, onTrim, onCtx }: { clip: Clip; onCtx: (e: React.MouseEvent, c: Clip) => void; onDown: (e: React.PointerEvent, c: Clip) => void; onTrim: (e: React.PointerEvent, c: Clip, edge: 'l' | 'r') => void }) {
+function ClipView({ clip, onDown, onTrim, onCtx, onEdgeCtx }: { clip: Clip; onEdgeCtx: (e: React.MouseEvent, c: Clip, edge: 'l' | 'r') => void; onCtx: (e: React.MouseEvent, c: Clip) => void; onDown: (e: React.PointerEvent, c: Clip) => void; onTrim: (e: React.PointerEvent, c: Clip, edge: 'l' | 'r') => void }) {
   const zoom = useStore((s) => s.zoom)
   const selected = useStore((s) => s.selection.includes(clip.id))
   const thumb = useStore((s) => (clip.mediaId ? s.thumbs[clip.mediaId] : undefined))
@@ -67,12 +70,11 @@ function ClipView({ clip, onDown, onTrim, onCtx }: { clip: Clip; onCtx: (e: Reac
           {clip.keys.map((k, i) => <rect key={i} x={k.t * zoom - 3} y={(ROW_H - 4) - Math.min(2, k.v * clip.volume) / 2 * (ROW_H - 8) - 5} width="6" height="6" fill="#ffd54a" transform={`rotate(45 ${k.t * zoom} ${(ROW_H - 4) - Math.min(2, k.v * clip.volume) / 2 * (ROW_H - 8) - 2})`} />)}
         </svg>
       )}
-      {clip.transition > 0 && <div className="trans" style={{ width: clip.transition * zoom }} title={`Cross-dissolve ${clip.transition.toFixed(2)}s`} />}
       {clip.fadeIn > 0 && <div className="fade fi" style={{ width: clip.fadeIn * zoom }} />}
       {clip.fadeOut > 0 && <div className="fade fo" style={{ width: clip.fadeOut * zoom }} />}
       <span className="cname">{name}{clip.speed !== 1 ? ` (${clip.speed}x)` : ''}</span>
-      <div className="edge l" style={{ width: eg }} onPointerDown={(e) => onTrim(e, clip, 'l')} />
-      <div className="edge r" style={{ width: eg }} onPointerDown={(e) => onTrim(e, clip, 'r')} />
+      <div className="edge l" style={{ width: eg }} onPointerDown={(e) => onTrim(e, clip, 'l')} onContextMenu={(e) => onEdgeCtx(e, clip, 'l')} />
+      <div className="edge r" style={{ width: eg }} onPointerDown={(e) => onTrim(e, clip, 'r')} onContextMenu={(e) => onEdgeCtx(e, clip, 'r')} />
     </div>
   )
 }
@@ -90,6 +92,11 @@ export function Timeline() {
   const [guide, setGuide] = useState<number | null>(null)
   const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
   const [ctx, setCtx] = useState<{ x: number; y: number; id: string } | null>(null)
+  const [fxDrag, setFxDrag] = useState<string | null>(null)
+  const [hot, setHot] = useState<string | null>(null)
+  const [ctrl, setCtrl] = useState(false)
+  const selEdge = st.selEdge
+  useEffect(() => { const f = (e: KeyboardEvent) => setCtrl(e.ctrlKey || e.metaKey); window.addEventListener('keydown', f); window.addEventListener('keyup', f); return () => { window.removeEventListener('keydown', f); window.removeEventListener('keyup', f) } }, [])
   useEffect(() => { if (!ctx) return; const c = () => setCtx(null); window.addEventListener('pointerdown', c); return () => window.removeEventListener('pointerdown', c) }, [ctx])
   // keep the playhead in view while playing or stepping (page flip, like Premiere)
   useEffect(() => {
@@ -153,6 +160,18 @@ export function Timeline() {
     e.stopPropagation()
     const s = useStore.getState()
     if (s.tool === 'razor') { s.split(snapTo(timeAt(e.clientX), snapPts(new Set())), [c.id]); return }
+    if (s.tool === 'slip' || s.tool === 'slide') {
+      s.setSelection([c.id]); const orig = s.clips; const x0 = e.clientX; let started = false; const grp = s.group([c.id]); const mode = s.tool
+      const mv = (ev: PointerEvent) => {
+        if (!started && Math.abs(ev.clientX - x0) < 3) return
+        const S = useStore.getState()
+        if (!started) { S.pushHistory(); started = true; useStore.setState({ fourUp: { clipId: c.id, mode } }) }
+        const d = Math.round(((ev.clientX - x0) / S.zoom) * S.fps) / S.fps
+        useStore.setState({ clips: mode === 'slip' ? slipClip(orig, S.media, S.fps, c.id, d) : slideClip(orig, S.media, S.fps, c.id, d), dirty: true })
+      }
+      const upp = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', upp); useStore.setState({ fourUp: null }); if (started) useStore.getState().overwrite(grp) }
+      window.addEventListener('pointermove', mv); window.addEventListener('pointerup', upp); return
+    }
     let sel = s.selection
     if (e.shiftKey) sel = sel.includes(c.id) ? sel.filter((x) => x !== c.id) : [...sel, c.id]
     else if (!sel.includes(c.id)) sel = [c.id]
@@ -188,44 +207,95 @@ export function Timeline() {
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up)
   }
 
+  const selectEdge = (ed: Edge, x: number, y: number, popup = true) => {
+    const S = useStore.getState(); S.setSelection([]); S.setSelEdge(ed); S.setPopup(popup ? { x, y, edge: ed } : null)
+  }
+  const onEdgeCtx = (e: React.MouseEvent, c: Clip, edge: 'l' | 'r') => {
+    e.preventDefault(); e.stopPropagation()
+    selectEdge(edgeOf(useStore.getState().clips, c.id, edge)!, e.clientX, e.clientY)
+  }
   const onTrim = (e: React.PointerEvent, c: Clip, edge: 'l' | 'r') => {
     if (e.button !== 0) return
     e.stopPropagation()
     const s = useStore.getState()
     if (s.tool === 'razor') return
-    if (!s.selection.includes(c.id)) s.setSelection([c.id])
-    const grp = new Set(s.group([c.id]))
-    const lane = s.clips.filter((x) => x.trackId === c.trackId && !grp.has(x.id))
-    const prevEnd = Math.max(0, ...lane.filter((x) => x.start + x.dur <= c.start + 1e-4 && !c.transition).map((x) => x.start + x.dur))
-    const nextStart = Math.min(Infinity, ...lane.filter((x) => x.start >= c.start + c.dur - 1e-4 && !x.transition).map((x) => x.start))
-    const snapshot = new Map(s.clips.filter((x) => grp.has(x.id)).map((x) => [x.id, { ...x }]))
-    const pts = snapPts(grp); let started = false
+    const ed = edgeOf(s.clips, c.id, edge)!
+    const orig = s.clips
+    const ripple = s.tool === 'ripple' || e.ctrlKey || e.metaKey
+    const roll = s.tool === 'roll'
+    const grp = s.group([c.id])
+    const cx = e.clientX, cy = e.clientY; let started = false
+    const pts = snapPts(new Set(grp))
+    const cut0 = edge === 'l' ? c.start : c.start + c.dur
+    if (roll && !(ed.a && ed.b)) { s.setSelection([c.id]); return }
     const move = (ev: PointerEvent) => {
+      if (!started && Math.abs(ev.clientX - cx) < 3) return
       const S = useStore.getState()
       if (!started) { S.pushHistory(); started = true }
-      const minDur = 1 / S.fps
-      let t = snapTo(timeAt(ev.clientX), pts)
-      useStore.setState((cur) => ({
-        clips: cur.clips.map((x) => {
-          const o = snapshot.get(x.id); if (!o) return x
-          const m = o.mediaId ? cur.media[o.mediaId] : undefined
-          if (edge === 'l') {
-            let ns = Math.min(t, o.start + o.dur - minDur)
-            if (o.kind !== 'title') ns = Math.max(ns, o.start - o.in / o.speed)
-            ns = Math.max(0, ns)
-            if (x.id === c.id) ns = Math.max(ns, Math.min(prevEnd, o.start))
-            const d = ns - o.start
-            return { ...o, start: ns, in: o.in + d * o.speed, dur: o.dur - d, keys: o.keys.map((k) => ({ t: k.t - d, v: k.v })), transition: d > 0 ? Math.min(o.transition, o.dur - d) : o.transition }
-          }
-          let dur = Math.max(minDur, t - o.start)
-          if (x.id === c.id && nextStart < Infinity && !o.transOut) dur = Math.min(dur, nextStart - o.start)
-          if (m) dur = Math.min(dur, (m.dur - o.in) / o.speed)
-          return { ...o, dur }
-        }), dirty: true,
-      }))
+      const t = snapTo(timeAt(ev.clientX), pts)
+      const next = roll ? rollEdge(orig, S.media, S.fps, ed.a, ed.b, t - cut0) : trimEdge(orig, S.media, S.fps, c.id, edge, t, ripple)
+      useStore.setState({ clips: next, dirty: true, selection: grp, selEdge: null, popup: null })
     }
-    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); setGuide(null) }
+    const up = () => {
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); setGuide(null)
+      if (started) useStore.getState().overwrite(grp)
+      else if (s.tool === 'select' && !ripple) selectEdge(ed, cx, cy)
+    }
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up)
+  }
+
+  // ---- transition blocks (drag edges = duration, drag body = alignment) ----
+  const blocks = useMemo(() => transitionBlocks(clips) as { id: string; edge: Edge; trackId: string; t0: number; t1: number; type: string; short: boolean; req: number; kind: string }[], [clips])
+  const onBlock = (e: React.PointerEvent, b: (typeof blocks)[0], mode: 'l' | 'r' | 'move') => {
+    if (e.button !== 0) return
+    e.stopPropagation()
+    const s0 = useStore.getState(); const info = edgeInfo(s0.clips, b.edge); if (!info) return
+    const orig = s0.clips; const x0 = e.clientX; let started = false
+    s0.setSelection([]); s0.setSelEdge(b.edge)
+    const fps = s0.fps
+    const move = (ev: PointerEvent) => {
+      if (!started && Math.abs(ev.clientX - x0) < 3) return
+      const S = useStore.getState()
+      if (!started) { S.pushHistory(); started = true }
+      const dt = (ev.clientX - x0) / S.zoom
+      let dur = info.req, align = info.align
+      if (mode === 'r') dur = info.dur + dt
+      else if (mode === 'l') dur = info.dur - dt
+      else if (!info.solo) { align = Math.min(1, Math.max(0, info.align - dt / info.dur)); for (const a of [0, 0.5, 1]) if (Math.abs(align - a) < 0.08) align = a }
+      dur = Math.max(1 / fps, Math.round(dur * fps) / fps)
+      const prim = orig.find((c) => c.id === (b.edge.b || b.edge.a))
+      const r = applyEdge(orig, S.media, fps, b.edge, { type: info.type === 'none' ? undefined : info.type, dur, align, audioType: S.prefs.audioType, alsoAudio: S.prefs.alsoAudio })
+      if (!('error' in r && r.error) && prim) useStore.setState({ clips: r.clips, dirty: true, status: r.short ? `Insufficient media: shortened to ${(r.dur ?? 0).toFixed(2)} s` : `Transition ${(r.dur ?? 0).toFixed(2)} s` })
+    }
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up)
+  }
+
+  // ---- drag-and-drop of effects onto edit points ----
+  const targets = (fx: string | null) => {
+    if (!fx) return []
+    const aud = isAudioType(fx); const seen = new Set<string>(); const out: { key: string; edge: Edge; t: number; trackId: string }[] = []
+    const add = (ed: Edge) => {
+      const key = `${ed.a}/${ed.b}`; if (seen.has(key)) return; seen.add(key)
+      const a = ed.a ? clips.find((c) => c.id === ed.a) : null, b = ed.b ? clips.find((c) => c.id === ed.b) : null
+      const prim = b || a; if (!prim || (prim.kind === 'audio') !== aud) return
+      out.push({ key, edge: ed, t: a && b ? cutOf(a, b) : b ? b.start : a!.start + a!.dur, trackId: prim.trackId })
+    }
+    for (const c of clips) { add(edgeOf(clips, c.id, 'l')!); const r = edgeOf(clips, c.id, 'r')!; if (!r.b) add(r) }
+    return out
+  }
+  const nearest = (fx: string, x: number, y: number) => {
+    const row = rowAt(y); if (!row) return null
+    const t = timeAt(x); let best: ReturnType<typeof targets>[0] | null = null, bd = 16 / useStore.getState().zoom
+    for (const g of targets(fx)) if (g.trackId === row) { const d = Math.abs(g.t - t); if (d < bd) { bd = d; best = g } }
+    return best
+  }
+  tlApi.setFxDrag = (id) => { setFxDrag(id); if (!id) setHot(null) }
+  tlApi.fxHover = (x, y) => setHot(fxDrag ? nearest(fxDrag, x, y)?.key ?? null : null)
+  tlApi.dropEffect = (id, x, y) => {
+    const g = nearest(id, x, y); if (!g) return false
+    const S = useStore.getState(); S.setSelection([]); S.setSelEdge(g.edge)
+    return S.setTransition(g.edge, { type: id }).ok
   }
 
   const scrub = (e: React.PointerEvent) => {
@@ -264,7 +334,7 @@ export function Timeline() {
   for (let t = 0; t < total; t += step) ticks.push(t)
 
   return (
-    <div className="timeline" ref={scroller}>
+    <div className={`timeline tool-${st.tool} ${ctrl ? 'ctrl' : ''}`} ref={scroller}>
       <div className="tl-inner" style={{ width: LABEL_W + total * zoom }}>
         <div className="ruler" onPointerDown={scrub} data-ruler>
           <div className="corner" style={{ width: LABEL_W }} />
@@ -284,7 +354,26 @@ export function Timeline() {
               )}
             </div>
             <div className="lane" style={{ left: LABEL_W }}>
-              {clips.filter((c) => c.trackId === tr.id).map((c) => <ClipView key={c.id} clip={c} onDown={onClipDown} onTrim={onTrim} onCtx={onCtx} />)}
+              {clips.filter((c) => c.trackId === tr.id).map((c) => <ClipView key={c.id} clip={c} onDown={onClipDown} onTrim={onTrim} onCtx={onCtx} onEdgeCtx={onEdgeCtx} />)}
+              {blocks.filter((b) => b.trackId === tr.id).map((b) => {
+                const w = Math.max(6, (b.t1 - b.t0) * zoom); const sel = selEdge && selEdge.a === b.edge.a && selEdge.b === b.edge.b
+                return (
+                  <div key={b.id} className={`tblock ${b.kind} ${b.short ? 'short' : ''} ${sel ? 'sel' : ''}`} data-tblock={b.id} style={{ left: b.t0 * zoom, width: w }}
+                    title={b.short ? `Insufficient media: shortened to ${(b.t1 - b.t0).toFixed(2)} s` : `${typeName(b.type)} ${(b.t1 - b.t0).toFixed(2)} s`}
+                    onPointerDown={(e) => onBlock(e, b, 'move')}
+                    onDoubleClick={(e) => selectEdge(b.edge, e.clientX, e.clientY)}
+                    onContextMenu={(e) => { e.preventDefault(); selectEdge(b.edge, e.clientX, e.clientY) }}>
+                    {w > 60 && <span className="tlabel">{typeName(b.type)}</span>}
+                    <div className="th l" onPointerDown={(e) => onBlock(e, b, 'l')} /><div className="th r" onPointerDown={(e) => onBlock(e, b, 'r')} />
+                  </div>)
+              })}
+              {selEdge && (() => {
+                const a = selEdge.a ? clips.find((c) => c.id === selEdge.a) : null, b = selEdge.b ? clips.find((c) => c.id === selEdge.b) : null
+                const prim = b || a; if (!prim || prim.trackId !== tr.id) return null
+                const t = a && b ? cutOf(a, b) : b ? b.start : a!.start + a!.dur
+                return <div className={`editpt ${a && b ? 'join' : b ? 'in' : 'out'}`} data-editpt style={{ left: t * zoom - (a && b ? 5 : b ? 0 : 6) }} />
+              })()}
+              {fxDrag && targets(fxDrag).filter((g) => g.trackId === tr.id).map((g) => <div key={g.key} className={`dropt ${hot === g.key ? 'hot' : ''}`} data-drop={g.key} style={{ left: g.t * zoom - 7 }} />)}
             </div>
           </div>
         ))}

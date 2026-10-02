@@ -164,6 +164,7 @@ function createWindow() {
       { label: 'Save project as…', accelerator: 'CmdOrCtrl+Shift+S', click: () => win.webContents.send('menu', 'saveas') },
       { label: 'Export MP4…', accelerator: 'CmdOrCtrl+M', click: () => win.webContents.send('menu', 'export') },
       { type: 'separator' }, { role: 'quit' } ] },
+    { label: 'Edit', submenu: [{ label: 'Preferences…', accelerator: 'CmdOrCtrl+,', click: () => win.webContents.send('menu', 'prefs') }] },
     { label: 'View', submenu: [{ role: 'toggleDevTools' }, { role: 'reload' }] },
   ]))
   win.webContents.on('will-prevent-unload', (e) => {

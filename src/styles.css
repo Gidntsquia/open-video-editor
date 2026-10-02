@@ -58,3 +58,22 @@ textarea { width:100%; resize:vertical; } .row { display:flex; gap:6px; align-it
 .ctx { position:fixed; z-index:90; background:var(--p2); border:1px solid var(--b); border-radius:4px; padding:4px 0; min-width:140px; } .ctx div { padding:5px 14px; cursor:pointer; } .ctx div:hover { background:var(--acc); }
 
 .marquee { position:fixed; z-index:60; border:1px solid var(--acc); background:rgba(77,141,255,.18); pointer-events:none; }
+
+.leftpanel { display:flex; flex-direction:column; min-height:0; min-width:0; } .leftpanel > .panel { flex:1; min-height:0; }
+.tabs { display:flex; gap:2px; padding:4px 6px 0; background:var(--p); } .tabs button { border-radius:4px 4px 0 0; } .tabs button.on { background:var(--acc,#4d8dff); color:#fff; }
+.fxsearch { margin:6px; padding:4px 6px; }
+.fxfolder { cursor:pointer; font-weight:600; padding:4px 2px; user-select:none; } .fxitem { padding:4px 6px 4px 18px; cursor:grab; border-radius:3px; user-select:none; } .fxitem:hover { background:rgba(255,255,255,.1); }
+.fxico { opacity:.6; margin-right:6px; } .fxdef { color:#7fdc8a; } .fxpop { position:fixed; z-index:95; background:var(--p2); border:1px solid var(--b); padding:4px; border-radius:4px; pointer-events:none; } .fxprev { display:block; }
+.tpopup { position:fixed; z-index:92; width:250px; background:var(--p2); border:1px solid var(--b); border-radius:6px; padding:8px; display:flex; flex-direction:column; gap:6px; box-shadow:0 6px 24px rgba(0,0,0,.5); }
+.tpopup .th { font-weight:600; } .tlist { max-height:190px; overflow:auto; border:1px solid var(--b); border-radius:4px; } .tgrp { font-size:11px; opacity:.7; padding:3px 6px; }
+.titem { padding:3px 10px; cursor:pointer; } .titem:hover { background:rgba(255,255,255,.1); } .titem.on { background:var(--acc,#4d8dff); color:#fff; }
+.trow { display:flex; align-items:center; gap:6px; } .trow > span { width:70px; } .trow input[type=number] { width:70px; } .trow.btns { justify-content:flex-end; }
+.twarn { color:#ffb74d; font-size:12px; }
+.tblock { position:absolute; top:3px; bottom:3px; z-index:4; border:1px solid rgba(255,255,255,.8); border-radius:3px; background:rgba(120,170,255,.45); overflow:hidden; cursor:grab; font-size:11px; color:#fff; }
+.tblock.audio { background:rgba(120,230,160,.45); } .tblock.sel { border-color:#ff4d4d; box-shadow:0 0 0 1px #ff4d4d; }
+.tblock.short { background:repeating-linear-gradient(45deg, rgba(255,193,7,.75) 0 6px, rgba(0,0,0,.55) 6px 12px); } .tlabel { padding:2px 8px; pointer-events:none; text-shadow:0 0 3px #000; white-space:nowrap; }
+.tblock .th { position:absolute; top:0; bottom:0; width:5px; cursor:ew-resize; background:rgba(255,255,255,.35); } .tblock .th.l { left:0; } .tblock .th.r { right:0; }
+.editpt { position:absolute; top:2px; bottom:2px; width:10px; z-index:6; pointer-events:none; border:3px solid #ff3b3b; } .editpt.join { border-top:0; border-bottom:0; } .editpt.in { border-right:0; width:7px; } .editpt.out { border-left:0; width:7px; }
+.dropt { position:absolute; top:2px; bottom:2px; width:14px; z-index:7; border:2px dashed #ffd54a; background:rgba(255,213,74,.2); pointer-events:none; } .dropt.hot { background:rgba(255,213,74,.7); border-style:solid; }
+.timeline .edge { cursor:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24'%3E%3Cpath d='M15 3H8v18h7' fill='none' stroke='%23ff3b3b' stroke-width='3'/%3E%3Cpath d='M3 12h8M8 9l3 3-3 3' fill='none' stroke='white' stroke-width='1.6'/%3E%3C/svg%3E") 12 12, ew-resize; } .timeline.tool-ripple .edge, .timeline.ctrl .edge { cursor:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24'%3E%3Cpath d='M15 3H8v18h7' fill='none' stroke='%23ffd54a' stroke-width='3'/%3E%3Cpath d='M3 12h8M8 9l3 3-3 3' fill='none' stroke='white' stroke-width='1.6'/%3E%3C/svg%3E") 12 12, ew-resize; }
+.fourup { position:fixed; z-index:80; left:50%; top:90px; transform:translateX(-50%); display:grid; grid-template-columns:repeat(4,240px); gap:2px; background:#000; border:1px solid var(--b); pointer-events:none; } .fourup canvas { width:240px; height:135px; }
