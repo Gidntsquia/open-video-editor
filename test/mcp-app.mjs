@@ -39,7 +39,7 @@ const c3 = clips.find((x) => x.id === 'c3'); assert.ok(c3.start > 5, JSON.string
 const sk = await call('app_seek', { clip: 'c3' }); assert.ok(sk.j.ok); sel = await call('app_selection'); assert.ok(Math.abs(sel.j.playhead - c3.start) < 0.05, JSON.stringify(sel.j)); pass('app_seek clip c3 -> ' + c3.start)
 
 // capture vs frame
-const cap = await call('app_capture', { t: 5 }); assert.equal(cap.img.length, 1); assert.ok(jpgW(cap.img[0].data) <= 512); pass('capture ' + jpgW(cap.img[0].data) + ' px wide')
+const ph0 = (await call('app_selection')).j.playhead; const cap = await call('app_capture', { t: 5 }); assert.equal(cap.img.length, 1); assert.equal((await call('app_selection')).j.playhead, ph0, 'capture must restore the playhead'); assert.ok(jpgW(cap.img[0].data) <= 512); pass('capture ' + jpgW(cap.img[0].data) + ' px wide')
 fs.writeFileSync(path.join(root, 'cache', 'mcp-capture.jpg'), Buffer.from(cap.img[0].data, 'base64'))
 const fr = await call('frame', { at: '5' }); fs.writeFileSync(path.join(root, 'cache', 'mcp-frame.jpg'), Buffer.from(fr.img[0].data, 'base64'))
 await c.close()

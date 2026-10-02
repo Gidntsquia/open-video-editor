@@ -19,10 +19,12 @@ export function startControl(cacheRoot, getWin) {
     },
     // wait for the frame to be painted (video decode after a seek), then grab the canvas
     capture: async (b) => {
-      if (b.t != null) await js(`window.__ove.engine.seek(${Number(b.t)})`)
-      await new Promise((r) => setTimeout(r, 1200))
+      const keep = await js(`window.__ove.store.getState().playhead`) // the user's playhead comes back after the grab
+      if (b.t != null) { await js(`window.__ove.engine.seek(${Number(b.t)})`); await new Promise((r) => setTimeout(r, 1200)) }
       const d = await js(`window.__ove.capture()`)
-      return d ? { ok: 1, jpeg: d.split(',')[1], playhead: await js(`window.__ove.store.getState().playhead`) } : { err: 'no preview canvas' }
+      const at = await js(`window.__ove.store.getState().playhead`)
+      if (b.t != null) await js(`window.__ove.engine.seek(${keep})`)
+      return d ? { ok: 1, jpeg: d.split(',')[1], at } : { err: 'no preview canvas' }
     },
     ping: () => ({ ok: 1 }),
   }

@@ -173,11 +173,16 @@ server.registerTool('project_open', { description: 'Load a .ovep as the current 
 const appErr = (r) => (r == null ? { err: process.platform === 'win32' ? 'app not reachable' : 'app tools need Windows node' } : r)
 async function withApp(fn) { const l = await appLaunch(); if (l.err) return reply(l, true); const r = appErr(await fn()); return reply(r.jpeg ? { ...r, jpeg: undefined } : { ...r, ...(l.launched ? { launched: 1 } : {}) }, !!r.err, r.jpeg ? [{ type: 'image', data: r.jpeg, mimeType: 'image/jpeg' }] : []) }
 server.registerTool('app_launch', { description: 'Start the editor app if it is not running.', inputSchema: {} }, async () => { const r = await appLaunch(); return reply(r, !!r.err) })
-server.registerTool('app_open', { description: 'Load the project in the app; refuses if the app has unsaved changes.', inputSchema: { path: OPT(S) } }, (a) => {
+server.registerTool('app_open', { description: 'Load the project in the app and park the playhead on t, else on the first cut; refuses if the app has unsaved changes.', inputSchema: { path: OPT(S), t: OPT(S) } }, (a) => serial(async () => {
   const p = a.path ? path.resolve(toLocal(a.path)) : ctx.file
   if (!p) return reply({ err: 'no project path' }, true)
-  return withApp(() => appCall('open', { path: p }))
-})
+  const out = await withApp(() => appCall('open', { path: p }))
+  if (out.isError) return out
+  let t = a.t != null ? Number(a.t) : null
+  if (t == null && sameFile(p, ctx.file) && ctx.proj) { const v = ctx.proj.clips.filter((c) => c.kind === 'video' && c.trackId === 'V1').sort((x, y) => x.start - y.start); if (v.length > 1) t = v[1].start }
+  if (t != null && Number.isFinite(t)) { const j = JSON.parse(out.content[0].text); await appCall('seek', { t }); j.playhead = t; return reply(j) }
+  return out
+}))
 server.registerTool('app_seek', { description: 'Move the app playhead to t or a clip start.', inputSchema: { t: OPT(S), clip: OPT(S) } }, (a) => withApp(() => appCall('seek', { t: a.t != null ? Number(a.t) : undefined, clip: a.clip })))
 server.registerTool('app_selection', { description: 'Selection in the app, playhead, dirty flag.', inputSchema: {} }, async () => {
   const r = await appCall('selection', {}, 3000); return reply(appErr(r), !r || !!r.err)
