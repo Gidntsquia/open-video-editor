@@ -195,6 +195,8 @@ async function mutate(cmd, a) {
           if (c.kind === 'title' && ['in'].includes(k)) fail(`unknown prop ${k} for a title`)
           const v = k === 'start' || k === 'in' || k === 'dur' || k.startsWith('fade') || k.startsWith('trans') ? parseTime(raw, k) : num(raw, k)
           checkRange(c, k, v); c[k] = v
+          // a bare number gets the default type (same as the app opening an old project); 0 clears it
+          if (k === 'transition' || k === 'transOut') { const tk = k === 'transition' ? 'transType' : 'transOutType'; if (v > 0) c[tk] = c[tk] || (c.kind === 'audio' ? 'constgain' : 'crossdissolve'); else delete c[tk] }
         } else if (STRINGS.includes(k)) {
           if (c.kind !== 'title') fail(`${k} is only for titles`)
           if (k === 'color' && !/^#[0-9a-fA-F]{6}$|^#[0-9a-fA-F]{3}$/.test(raw)) fail('color must be #rrggbb')

@@ -53,17 +53,18 @@ for (const type of ['constpower', 'constgain', 'expfade']) {
   const off = Math.round(T0 * SR + best[1]) // export sample index of preview sample 0
   check(`${type}: preview waveform aligned with the export (r ${best[0].toFixed(3)} on 0.5 s, start latency ${((f + best[1]) / SR * 1000).toFixed(0)} ms)`, best[0] > 0.25)
   const rows = []; let worst = 0
-  // per window: the preview element may drift a few ms (Chromium clock), so align each window locally (±40 ms) by
+  // per window: the preview element may drift a few ms (Chromium clock), so align each window locally (±80 ms, the 2-frame playback tolerance of the sync scenario) by
   // correlation before comparing levels
   const corr = (i0, o, n) => { let c = 0, se = 0, sp = 0; for (let i = 0; i < n; i++) { c += pv[i0 + i] * ex[o + i]; se += ex[o + i] ** 2; sp += pv[i0 + i] ** 2 } return c / Math.sqrt(se * sp + 1e-12) }
   for (let t = T0 + 0.25; t + WIN <= T0 + LEN - 0.25; t += WIN) {
     const n = Math.round(WIN * SR), e0 = Math.round(t * SR); let i0 = e0 - off; if (i0 < f) continue
-    let bl = [corr(i0, e0, n), 0]; for (let L = -0.04 * SR; L <= 0.04 * SR; L += 8) { const r = corr(i0 + L, e0, n); if (r > bl[0]) bl = [r, L] }
+    let bl = [corr(i0, e0, n), 0]; for (let L = -0.08 * SR; L <= 0.08 * SR; L += 8) { const r = corr(i0 + L, e0, n); if (r > bl[0]) bl = [r, L] }
     i0 += bl[1]
     const p = rmsOf(pv, i0, i0 + n), e = rmsOf(ex, e0, e0 + n)
     const d = db(p) - db(e); if (db(e) > -50) worst = Math.max(worst, Math.abs(d))
     rows.push(`${t.toFixed(2)}s preview ${db(p).toFixed(1)} export ${db(e).toFixed(1)} Δ ${d.toFixed(2)} (r ${bl[0].toFixed(2)} ${(bl[1] / SR * 1000).toFixed(0)} ms)`)
   }
   fs.writeFileSync(D + type + '.txt', rows.join('\n'))
+  if (worst > 1) { const k = D + type + '-fail-' + Date.now(); fs.copyFileSync(D + type + '-preview.f32', k + '.f32'); fs.writeFileSync(k + '.txt', rows.join('\n')) } // keep failing captures for analysis
   check(`${type}: preview vs export RMS within 1 dB over ${rows.length} windows (worst ${worst.toFixed(2)} dB)`, rows.length >= 8 && worst <= 1, rows.map((r) => r.replace(/preview |export |\(.*\)/g, '')).join(' | '))
 }
