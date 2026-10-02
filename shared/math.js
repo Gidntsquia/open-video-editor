@@ -86,11 +86,52 @@ function videoSpec(type, solo) {
 
 const EX = { if: (c, a, b) => (c ? a : b), gte: (a, b) => (a >= b ? 1 : 0), lt: (a, b) => (a < b ? 1 : 0), abs: Math.abs, sin: Math.sin, cos: Math.cos, exp: Math.exp, clip: clamp, min: Math.min, max: Math.max, PI: Math.PI }
 const exprCache = new Map()
+/** Compile an ffmpeg-syntax expression of p to a closure (no eval/new Function: the renderer's CSP forbids it). */
+function compileExpr(src) {
+  const toks = src.match(/\d+\.?\d*|[A-Za-z_]\w*|[-+*/(),]/g) || []
+  let i = 0
+  const peek = () => toks[i], next = () => toks[i++]
+  const expect = (t) => { if (next() !== t) throw new Error(`bad expression: ${src}`) }
+  function sum() {
+    let l = prod()
+    while (peek() === '+' || peek() === '-') { const op = next(), r = prod(), a = l; l = op === '+' ? (p) => a(p) + r(p) : (p) => a(p) - r(p) }
+    return l
+  }
+  function prod() {
+    let l = unary()
+    while (peek() === '*' || peek() === '/') { const op = next(), r = unary(), a = l; l = op === '*' ? (p) => a(p) * r(p) : (p) => a(p) / r(p) }
+    return l
+  }
+  function unary() {
+    if (peek() === '-') { next(); const u = unary(); return (p) => -u(p) }
+    if (peek() === '+') { next(); return unary() }
+    return atom()
+  }
+  function atom() {
+    const t = next()
+    if (t === undefined) throw new Error(`bad expression: ${src}`)
+    if (t === '(') { const e = sum(); expect(')'); return e }
+    if (/^\d/.test(t)) { const v = parseFloat(t); return () => v }
+    if (t === 'p') return (p) => p
+    if (t === 'PI') return () => Math.PI
+    if (peek() === '(') {
+      next(); const args = []
+      if (peek() !== ')') { args.push(sum()); while (peek() === ',') { next(); args.push(sum()) } }
+      expect(')')
+      const f = EX[t]; if (!f) throw new Error(`unknown function ${t} in ${src}`)
+      return (p) => f(...args.map((a) => a(p)))
+    }
+    throw new Error(`bad token ${t} in ${src}`)
+  }
+  const f = sum()
+  if (i !== toks.length) throw new Error(`bad expression: ${src}`)
+  return f
+}
 /** Evaluate an ffmpeg-syntax expression of p in JS. */
 export function evalExpr(src, p) {
   let f = exprCache.get(src)
-  if (!f) { f = new Function('p', 'EX', `const {${Object.keys(EX).filter((k) => k !== 'if').join(',')}} = EX; const ife = EX.if; return (${src.replace(/\bif\(/g, 'ife(')})`); exprCache.set(src, f) }
-  return f(p, EX)
+  if (!f) { f = compileExpr(src); exprCache.set(src, f) }
+  return f(p)
 }
 /** Substitute progress expression `pe` for the variable p in an expression string. */
 export const withP = (src, pe) => src.replace(/\bp\b/g, `(${pe})`)

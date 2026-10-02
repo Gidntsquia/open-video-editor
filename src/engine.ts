@@ -66,7 +66,12 @@ export class Engine {
 
   toggle() { this.playing ? this.pause() : this.play(1) }
 
+  /** While paused, keep repainting until this time: a decoded frame can reach the canvas a moment after 'seeked'. */
+  private settleUntil = 0
+  private pending = false
+
   seek(t: number) {
+    this.settleUntil = performance.now() + 2500
     useStore.getState().setPlayhead(t)
     if (this.playing) { this.t0 = performance.now(); this.tl0 = useStore.getState().playhead }
     this.dirty = true
@@ -96,7 +101,12 @@ export class Engine {
     el.muted = c.kind === 'video'
     el.playsInline = true
     el.src = src
-    el.addEventListener('seeked', () => (this.dirty = true))
+    el.addEventListener('seeked', () => {
+      this.dirty = true; this.settleUntil = performance.now() + 2500
+      // the decoded frame can reach the canvas well after 'seeked' (cold start); repaint when the compositor has it
+      const rv = (el as any).requestVideoFrameCallback
+      if (rv) rv.call(el, () => { this.dirty = true; this.settleUntil = performance.now() + 300 })
+    })
     el.addEventListener('loadeddata', () => (this.dirty = true))
     el.addEventListener('error', () => {
       const cur = useStore.getState().media[m.id]
@@ -141,7 +151,7 @@ export class Engine {
       let d = this.droppedBase, dec = this.decodedBase
       for (const v of this.els.values()) { const q = v.el.getVideoPlaybackQuality?.(); if (q) { d += q.droppedVideoFrames; dec += q.totalVideoFrames } }
       this.stats.dropped = d; this.stats.decoded = dec
-    } else if (this.dirty || s.playhead !== this.lastPh) {
+    } else if (this.dirty || s.playhead !== this.lastPh || this.pending || now < this.settleUntil) {
       this.dirty = false
       this.sync(s.playhead, false)
       this.draw(s.playhead)
@@ -198,10 +208,11 @@ export class Engine {
     const vis = s.clips
       .filter((c) => c.kind !== 'audio' && t >= c.start && t < c.start + c.dur && !s.tracks.find((x) => x.id === c.trackId)?.hidden)
       .sort((a, b) => (order.get(a.trackId)! - order.get(b.trackId)!) || a.start - b.start)
+    this.pending = false
     for (const c of vis) {
       if (c.kind === 'title') { this.drawTitle(g, c, s.width, s.height); continue }
       const m = s.media[c.mediaId!]; const v = this.els.get(c.id)
-      if (!m || !v || v.el.readyState < 2) continue
+      if (!m || !v || v.el.readyState < 2 || (!this.playing && v.el.seeking)) { this.pending = true; continue }
       const p = placement(c, m.w, m.h, s.width, s.height)
       const rx = v.el.videoWidth / m.w, ry = v.el.videoHeight / m.h
       const at = activeTrans(c, t - c.start)

@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import fs from 'node:fs'
 import crypto from 'node:crypto'
+import { Readable } from 'node:stream'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { buildExport } from './exporter.js'
 import { probeFile } from '../shared/probe.js'
@@ -176,12 +177,25 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  protocol.handle('media', (req) => {
+  // Serve media with explicit Range support so <video> is always seekable (net.fetch(file://) sometimes answered a cold first request without it).
+  const MIME = { '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/mp4', '.mkv': 'video/x-matroska', '.webm': 'video/webm', '.wav': 'audio/wav', '.mp3': 'audio/mpeg' }
+  protocol.handle('media', async (req) => {
     const p = decodeURIComponent(new URL(req.url).pathname.slice(1))
-    return net.fetch(pathToFileURL(p).toString(), { headers: req.headers, method: req.method }).then((r) => {
-      const h = new Headers(r.headers); h.set('Access-Control-Allow-Origin', '*')
-      return new Response(r.body, { status: r.status, statusText: r.statusText, headers: h })
-    })
+    let st
+    try { st = await fs.promises.stat(p) } catch { return new Response('not found', { status: 404 }) }
+    const size = st.size
+    const h = { 'Access-Control-Allow-Origin': '*', 'Accept-Ranges': 'bytes', 'Content-Type': MIME[path.extname(p).toLowerCase()] || 'application/octet-stream' }
+    const m = /bytes=(\d*)-(\d*)/.exec(req.headers.get('range') || '')
+    let start = 0, end = size - 1, status = 200
+    if (m && (m[1] || m[2])) {
+      if (m[1] === '') { start = Math.max(0, size - Number(m[2])) } else { start = Number(m[1]); if (m[2]) end = Math.min(end, Number(m[2])) }
+      if (start > end || start >= size) return new Response(null, { status: 416, headers: { ...h, 'Content-Range': `bytes */${size}` } })
+      status = 206; h['Content-Range'] = `bytes ${start}-${end}/${size}`
+    }
+    h['Content-Length'] = String(end - start + 1)
+    if (req.method === 'HEAD' || size === 0) return new Response(null, { status, headers: h })
+    const stream = fs.createReadStream(p, { start, end })
+    return new Response(Readable.toWeb(stream), { status, headers: h })
   })
   createWindow()
 })

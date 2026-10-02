@@ -8,6 +8,9 @@ let id = 0; const pend = new Map()
 ws.onmessage = (m) => { const d = JSON.parse(m.data); if (d.id && pend.has(d.id)) { pend.get(d.id)(d); pend.delete(d.id) } }
 const send = (method, params = {}) => new Promise((r) => { const i = ++id; pend.set(i, r); ws.send(JSON.stringify({ id: i, method, params })) })
 export const ev = async (js) => { const r = await send('Runtime.evaluate', { expression: js, awaitPromise: true, returnByValue: true }); if (r.result.exceptionDetails) throw new Error(r.result.exceptionDetails.exception?.description); return r.result.result.value }
+// Keep the (inactive/hidden) window rendering so video seeks complete without stealing focus.
+await send('Emulation.setFocusEmulationEnabled', { enabled: true }); await send('Page.setWebLifecycleState', { state: 'active' }).catch(() => {})
+await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 })
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 export const st = (expr) => ev(`(()=>{const s=__ove.store.getState();return JSON.stringify(${expr})})()`).then(JSON.parse)
 export const rect = (sel) => ev(`(()=>{const e=document.querySelector(${JSON.stringify(sel)});if(!e)return null;const r=e.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height}})()`)
