@@ -1,6 +1,6 @@
 import { useStore } from './store'
 import type { Clip, Media } from './types'
-import { placement, clipAlpha, clipGain, sourceTime, hasColor, colorParams, sequenceEnd } from '../shared/math.js'
+import { placement, clipGain, sourceTime, hasColor, colorParams, sequenceEnd, activeTrans, transFx, layerRect, DIP_COLOR, BLUR_FRAC } from '../shared/math.js'
 
 type VEl = { el: HTMLVideoElement; lastSeek: number; gain?: GainNode; src: string }
 
@@ -204,10 +204,26 @@ export class Engine {
       if (!m || !v || v.el.readyState < 2) continue
       const p = placement(c, m.w, m.h, s.width, s.height)
       const rx = v.el.videoWidth / m.w, ry = v.el.videoHeight / m.h
-      g.globalAlpha = clipAlpha(c, t - c.start)
-      if (hasColor(c)) { const q = colorParams(c); g.filter = `brightness(${q.b}) contrast(${q.c}) saturate(${q.s})` }
-      g.drawImage(v.el, p.sx * rx, p.sy * ry, p.sw * rx, p.sh * ry, p.dx, p.dy, p.dw, p.dh)
+      const at = activeTrans(c, t - c.start)
+      const fx = at ? transFx(at.type, at.role, at.solo, at.p) : null
+      const lr = fx ? layerRect(p, fx, s.width, s.height) : { x: p.dx, y: p.dy, w: p.dw, h: p.dh }
+      g.save()
+      if (fx?.rect) { const [x0, y0, x1, y1] = fx.rect; g.beginPath(); g.rect(x0 * s.width, y0 * s.height, (x1 - x0) * s.width, (y1 - y0) * s.height); g.clip() }
+      const col = hasColor(c) ? (() => { const q = colorParams(c); return `brightness(${q.b}) contrast(${q.c}) saturate(${q.s})` })() : ''
+      g.globalAlpha = fx ? fx.alpha : 1
+      g.filter = col || 'none'
+      g.drawImage(v.el, p.sx * rx, p.sy * ry, p.sw * rx, p.sh * ry, lr.x, lr.y, lr.w, lr.h)
+      if (fx && fx.blur > 0) {
+        g.globalAlpha = fx.alpha * fx.blur
+        g.filter = `${col} blur(${Math.round(s.width * BLUR_FRAC)}px)`.trim()
+        g.drawImage(v.el, p.sx * rx, p.sy * ry, p.sw * rx, p.sh * ry, lr.x, lr.y, lr.w, lr.h)
+      }
+      g.restore()
       g.filter = 'none'; g.globalAlpha = 1
+      if (fx && fx.dip > 0 && DIP_COLOR[at!.type as keyof typeof DIP_COLOR]) {
+        const [r, gg, b] = DIP_COLOR[at!.type as keyof typeof DIP_COLOR]
+        g.fillStyle = `rgb(${r},${gg},${b})`; g.globalAlpha = fx.dip; g.fillRect(0, 0, s.width, s.height); g.globalAlpha = 1
+      }
     }
   }
 

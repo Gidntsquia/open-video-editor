@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { Clip, Media, Track, Wave } from './types'
 import { sequenceEnd } from '../shared/math.js'
+import { edgeOf, applyEdge, removeEdge, edgeInfo, clearIn, clearOut, migrateClips } from '../shared/edit.js'
 
 let idn = Date.now()
 export const uid = (p = 'id') => `${p}${(idn++).toString(36)}`
@@ -15,6 +16,12 @@ const blank = (o: Partial<Clip>): Clip => ({
   transition: 0, transOut: 0, brightness: 1, contrast: 1, saturation: 1, crop: { l: 0, r: 0, t: 0, b: 0 }, scale: 1, posX: 0, posY: 0, ...o,
 })
 
+export type Tool = 'select' | 'razor' | 'ripple' | 'roll' | 'slip' | 'slide'
+export type Edge = { a: string | null; b: string | null }
+export type Prefs = { videoType: string; audioType: string; videoDur: number; audioDur: number; alsoAudio: boolean }
+export const PREFS0: Prefs = { videoType: 'crossdissolve', audioType: 'constpower', videoDur: 1, audioDur: 1, alsoAudio: true }
+const loadPrefs = (): Prefs => { try { return { ...PREFS0, ...JSON.parse(localStorage.getItem('ove.prefs') || '{}') } } catch { return PREFS0 } }
+
 type Snap = { clips: Clip[]; media: Record<string, Media> }
 export type State = {
   media: Record<string, Media>
@@ -26,7 +33,9 @@ export type State = {
   playhead: number
   playing: boolean
   selection: string[]
-  tool: 'select' | 'razor'
+  tool: Tool
+  selEdge: Edge | null
+  prefs: Prefs
   zoom: number // px per second
   snap: boolean
   past: Snap[]; future: Snap[]
@@ -38,7 +47,9 @@ export type State = {
   setStatus: (s: string) => void
   setPlayhead: (t: number) => void
   setSelection: (ids: string[]) => void
-  setTool: (t: 'select' | 'razor') => void
+  setTool: (t: Tool) => void
+  setSelEdge: (e: Edge | null) => void
+  setPrefs: (p: Partial<Prefs>) => void
   setZoom: (z: number) => void
   pushHistory: (key?: string) => void
   undo: () => void
@@ -63,7 +74,10 @@ export type State = {
   setProps: (ids: string[], patch: Partial<Clip>, key?: string) => void
   setSpeed: (ids: string[], speed: number) => void
   addTransition: (id: string, d: number) => void
-  removeTransition: (id: string) => void
+  setTransition: (edge: Edge, o: { type?: string; dur?: number; align?: number | string; alsoAudio?: boolean }) => { ok: boolean; dur?: number; req?: number; short?: boolean; msg: string }
+  removeTransition: (id: string | Edge) => void
+  applyDefault: (kind: 'video' | 'audio') => void
+  nudge: (ids: string[], frames: number) => void
   toggleTrack: (id: string, what: 'muted' | 'hidden') => void
   loadProject: (d: any, path: string | null) => void
   serialize: () => any
@@ -74,12 +88,14 @@ export const useStore = create<State>((set, get) => {
   const snap = (): Snap => ({ clips: structuredClone(get().clips), media: get().media })
   return {
     media: {}, thumbs: {}, waves: {}, tracks: TRACKS, clips: [], width: 1920, height: 1080, fps: 30,
-    playhead: 0, playing: false, selection: [], binSel: [], tool: 'select', zoom: 60, snap: true,
+    playhead: 0, playing: false, selection: [], binSel: [], tool: 'select', selEdge: null, prefs: loadPrefs(), zoom: 60, snap: true,
     past: [], future: [], lastEdit: { key: '', t: 0 }, projectPath: null, dirty: false, status: 'Ready',
     setStatus: (status) => set({ status }),
     setPlayhead: (playhead) => set({ playhead: Math.max(0, playhead) }),
     setSelection: (selection) => set((s) => ({ selection, binSel: selection.length ? [] : s.binSel })),
     setTool: (tool) => set({ tool }),
+    setSelEdge: (selEdge) => set({ selEdge }),
+    setPrefs: (p) => { const prefs = { ...get().prefs, ...p }; try { localStorage.setItem('ove.prefs', JSON.stringify(prefs)) } catch {} set({ prefs }) },
     setZoom: (zoom) => set({ zoom: Math.min(600, Math.max(0.1, zoom)) }),
     pushHistory: (key) => {
       const s = get(); const now = performance.now()
@@ -126,8 +142,8 @@ export const useStore = create<State>((set, get) => {
           if (c.link && i > 0) { if (!links.has(c.link + i)) links.set(c.link + i, uid('l')); link = links.get(c.link + i) }
           const cut = a - c.start
           out.push({ ...structuredClone(c), id: i === 0 ? c.id : uid('c'), link, start: a, in: c.in + cut * c.speed, dur: b - a,
-            keys: c.keys.map((k) => ({ t: k.t - cut, v: k.v })), transition: a > c.start + eps ? 0 : c.transition,
-            transOut: b < end - eps ? 0 : c.transOut, fadeIn: a > c.start + eps ? 0 : c.fadeIn, fadeOut: b < end - eps ? 0 : c.fadeOut })
+            keys: c.keys.map((k) => ({ t: k.t - cut, v: k.v })), fadeIn: a > c.start + eps ? 0 : c.fadeIn, fadeOut: b < end - eps ? 0 : c.fadeOut,
+            ...(a > c.start + eps ? clearIn(c) : {}), ...(b < end - eps ? clearOut(c) : {}) })
         })
       }
       set({ clips: out, dirty: true })
@@ -174,9 +190,9 @@ export const useStore = create<State>((set, get) => {
       for (const c of hits) {
         const cut = t - c.start
         const nl = c.link ? (links.get(c.link) ?? (links.set(c.link, uid('l')), links.get(c.link)!)) : undefined
-        const right: Clip = { ...structuredClone(c), id: uid('c'), link: nl, start: t, in: c.in + cut * c.speed, dur: c.dur - cut,
-          transition: 0, fadeIn: 0, keys: c.keys.map((k) => ({ t: k.t - cut, v: k.v })) }
-        const left: Clip = { ...c, dur: cut, transOut: 0, fadeOut: 0 }
+        const right: Clip = { ...clearIn(structuredClone(c)), id: uid('c'), link: nl, start: t, in: c.in + cut * c.speed, dur: c.dur - cut,
+          fadeIn: 0, keys: c.keys.map((k) => ({ t: k.t - cut, v: k.v })) }
+        const left: Clip = { ...clearOut(c), dur: cut, fadeOut: 0 }
         add.push(right); changed.set(c.id, left)
       }
       set((st) => ({ clips: [...st.clips.map((c) => changed.get(c.id) || c), ...add], selection: [], dirty: true }))
@@ -200,7 +216,7 @@ export const useStore = create<State>((set, get) => {
     paste: (t) => {
       if (!clipboard.length) return
       const t0 = Math.min(...clipboard.map((c) => c.start)); const lm = new Map<string, string>()
-      const add = clipboard.map((c) => ({ ...structuredClone(c), id: uid('c'), start: t + c.start - t0, transition: 0, transOut: 0,
+      const add = clipboard.map((c) => ({ ...clearOut(clearIn(structuredClone(c))), id: uid('c'), start: t + c.start - t0,
         link: c.link ? (lm.get(c.link) ?? (lm.set(c.link, uid('l')), lm.get(c.link)!)) : undefined }))
       get().pushHistory()
       set((st) => ({ clips: [...st.clips, ...add], selection: add.map((c) => c.id), dirty: true }))
@@ -216,7 +232,7 @@ export const useStore = create<State>((set, get) => {
       for (const c of hits) trs.set(c.trackId, Math.max(trs.get(c.trackId) ?? 0, cutOf(c)))
       set((st) => ({ dirty: true, clips: st.clips.map((c) => {
         const h = H.get(c.id)
-        if (h) { const cut = cutOf(h); return side === 'start' ? { ...h, in: h.in + cut * h.speed, dur: h.dur - cut, transition: 0, fadeIn: 0, keys: h.keys.map((k) => ({ t: k.t - cut, v: k.v })) } : { ...h, dur: h.dur - cut, transOut: 0, fadeOut: 0 } }
+        if (h) { const cut = cutOf(h); return side === 'start' ? { ...clearIn(h), in: h.in + cut * h.speed, dur: h.dur - cut, fadeIn: 0, keys: h.keys.map((k) => ({ t: k.t - cut, v: k.v })) } : { ...clearOut(h), dur: h.dur - cut, fadeOut: 0 } }
         const sh = trs.get(c.trackId)
         return sh && c.start >= Math.min(...hits.filter((x) => x.trackId === c.trackId).map((x) => x.start + x.dur)) - 1e-6 ? { ...c, start: c.start - sh } : c
       }) }))
@@ -248,37 +264,59 @@ export const useStore = create<State>((set, get) => {
       set((st) => ({ clips: st.clips.map((c) => (grp.has(c.id) ? { ...c, speed: sp, dur: (c.dur * c.speed) / sp, keys: c.keys.map((k) => ({ t: (k.t * c.speed) / sp, v: k.v })) } : c)), dirty: true }))
     },
     addTransition: (id, d) => {
-      const s = get(); const b = s.clips.find((c) => c.id === id); if (!b) return
-      const partners = s.clips.filter((c) => c.link && c.link === b.link)
-      const pairs: [Clip, Clip][] = []
-      for (const cur of [b, ...partners]) {
-        const prev = s.clips.filter((c) => c.trackId === cur.trackId && c.id !== cur.id && c.kind !== 'title' && Math.abs(c.start + c.dur - cur.start) < 0.05).sort((x, y) => y.start - x.start)[0]
-        if (prev) pairs.push([prev, cur])
-      }
-      if (!pairs.length) { set({ status: 'Dissolve needs a clip ending exactly where this one starts on the same track.' }); return }
-      get().pushHistory()
-      const upd = new Map<string, Partial<Clip>>()
-      for (const [prev, cur] of pairs) {
-        const m = prev.mediaId ? s.media[prev.mediaId] : undefined
-        // extend the previous clip into its handle; if there is none, pull the next clip earlier
-        const handle = m ? m.dur - (prev.in + prev.dur * prev.speed) : 0
-        const ext = Math.min(d, handle / prev.speed)
-        const shift = d - ext
-        upd.set(prev.id, { dur: prev.dur + ext, transOut: d })
-        upd.set(cur.id, { start: cur.start - shift, transition: d })
-        if (shift > 1e-6) { /* subsequent clips keep position; overlap is created by moving cur earlier */ }
-      }
-      set((st) => ({ clips: st.clips.map((c) => (upd.has(c.id) ? { ...c, ...upd.get(c.id) } : c)), dirty: true }))
+      const s = get(); const c = s.clips.find((x) => x.id === id); if (!c) return
+      const e = edgeOf(s.clips, id, 'l'); if (e) get().setTransition(e, { dur: d })
     },
-    removeTransition: (id) => {
-      const s = get(); const b = s.clips.find((c) => c.id === id); if (!b) return
+    setTransition: (edge, o) => {
+      const s = get(); const prim = s.clips.find((c) => c.id === (edge.b || edge.a)); if (!prim) return { ok: false, msg: 'no edit point' }
+      const isA = prim.kind === 'audio'
+      const type = o.type ?? (isA ? s.prefs.audioType : s.prefs.videoType)
+      const dur = o.dur ?? (isA ? s.prefs.audioDur : s.prefs.videoDur)
+      const r = applyEdge(s.clips, s.media, s.fps, edge, { type, dur, align: o.align ?? 0.5, audioType: s.prefs.audioType, alsoAudio: o.alsoAudio ?? s.prefs.alsoAudio })
+      if (r.error) { set({ status: r.error }); return { ok: false, msg: r.error } }
       get().pushHistory()
-      set((st) => ({ clips: st.clips.map((c) => (c.id === id || (b.link && c.link === b.link) ? { ...c, transition: 0 } : c)).map((c) => (c.transOut && !st.clips.some((x) => x.trackId === c.trackId && x.transition > 0 && Math.abs(x.start - (c.start + c.dur - c.transOut)) < 0.05 && x.id !== id && x.link !== b.link) ? { ...c, transOut: 0 } : c)), dirty: true }))
+      const msg = r.short ? `Insufficient media: shortened to ${r.dur.toFixed(2)} s` : `Transition ${r.dur.toFixed(2)} s`
+      set({ clips: r.clips, dirty: true, status: msg })
+      return { ok: true, dur: r.dur, req: r.req, short: r.short, msg }
+    },
+    removeTransition: (idOrEdge) => {
+      const s = get(); const edge = typeof idOrEdge === 'string' ? edgeOf(s.clips, idOrEdge, 'l') : idOrEdge; if (!edge) return
+      if (!edgeInfo(s.clips, edge)) return
+      get().pushHistory()
+      set({ clips: removeEdge(s.clips, edge), dirty: true })
+    },
+    applyDefault: (kind) => {
+      const s = get()
+      // edit points: the selected edge, else the edges of the selected clips (Premiere)
+      const edges: Edge[] = []
+      if (s.selEdge) edges.push(s.selEdge)
+      else for (const id of s.selection) { const c = s.clips.find((x) => x.id === id); if (!c || (kind === 'audio') !== (c.kind === 'audio')) continue; const l = edgeOf(s.clips, id, 'l'); if (l) edges.push(l) }
+      if (!edges.length) { set({ status: 'Select an edit point or clips first' }); return }
+      for (const e of edges) {
+        const prim = s.clips.find((c) => c.id === (e.b || e.a)); if (!prim) continue
+        const wantAudio = kind === 'audio'
+        // Ctrl+Shift+D on a video edit point targets its linked audio edit point
+        let edge = e
+        if (wantAudio && prim.kind !== 'audio') {
+          const la = s.clips.find((c) => c.kind === 'audio' && prim.link && c.link === prim.link); if (!la) continue
+          edge = edgeOf(s.clips, la.id, e.b ? 'l' : 'r')!
+        }
+        get().setTransition(edge, { type: wantAudio ? s.prefs.audioType : s.prefs.videoType, dur: wantAudio ? s.prefs.audioDur : s.prefs.videoDur })
+      }
+    },
+    nudge: (ids, frames) => {
+      const s = get(); const grp = new Set(s.group(ids)); if (!grp.size) return
+      get().pushHistory()
+      const d = frames / s.fps
+      const minStart = Math.min(...s.clips.filter((c) => grp.has(c.id)).map((c) => c.start))
+      const dd = Math.max(d, -minStart)
+      set((st) => ({ clips: st.clips.map((c) => (grp.has(c.id) ? { ...c, start: c.start + dd } : c)), dirty: true }))
+      get().overwrite([...grp])
     },
     toggleTrack: (id, what) => set((s) => ({ tracks: s.tracks.map((t) => (t.id === id ? { ...t, [what]: !t[what] } : t)), dirty: true })),
     serialize: () => { const s = get(); return { version: 1, width: s.width, height: s.height, fps: s.fps, media: s.media, tracks: s.tracks, clips: s.clips } },
     loadProject: (d, path) => set({
-      media: d.media || {}, tracks: d.tracks || TRACKS, clips: d.clips || [], width: d.width, height: d.height, fps: d.fps,
+      media: d.media || {}, tracks: d.tracks || TRACKS, clips: migrateClips(d.clips || []), selEdge: null, width: d.width, height: d.height, fps: d.fps,
       playhead: 0, selection: [], binSel: [], past: [], future: [], projectPath: path, dirty: false, thumbs: {}, waves: {},
     }),
   }

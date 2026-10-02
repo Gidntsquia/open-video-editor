@@ -1,6 +1,8 @@
 export type Crop = { l: number; r: number; t: number; b: number }
 export type Key = { t: number; v: number }
 export type Clip = {
+  transType?: string; transAlign?: number; transReq?: number; transSolo?: boolean; transExtPrev?: number; transExtCur?: number
+  transOutType?: string; transOutSolo?: boolean
   id: string
   kind: 'video' | 'audio' | 'title'
   trackId: string
