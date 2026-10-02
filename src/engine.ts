@@ -11,7 +11,8 @@ function previewSeek(c: Clip, m: Media, t: number) {
   const off = (t - c.start) * (c.speed || 1)
   return in0 + (Math.floor(off * f + 1e-6) + 0.5) / f
 }
-type VEl = { el: HTMLVideoElement; lastSeek: number; gain?: GainNode; src: string }
+type VEl = { el: HTMLVideoElement; lastSeek: number; gain?: GainNode; src: string; corrAt?: number; lead?: number }
+const PREROLL = 0.5 // s before a clip starts: its element already plays (silent) so it is in sync at the cut
 
 /** Real-time preview: one <video> per active clip, composited on a canvas; audio via WebAudio gain per clip. */
 export class Engine {
@@ -181,22 +182,34 @@ export class Engine {
       const v = this.ensure(c, m, t)
       const active = t >= c.start && t < c.start + c.dur
       const target = sourceTime(c, t)
-      if (!active) {
+      // pre-roll: while playing, a clip about to start already runs (silent) from the source frames before its in point
+      const preroll = playing && !active && t < c.start && t >= c.start - PREROLL && target >= 0
+      if (!active && !preroll) {
         v.el.pause()
         if (t < c.start && Math.abs(v.lastSeek - c.in) > 0.05 && !v.el.seeking) { v.el.currentTime = c.in; v.lastSeek = c.in }
         if (v.gain) v.gain.gain.value = 0
         continue
       }
       if (v.gain) {
-        v.gain.gain.setTargetAtTime(tr?.muted ? 0 : clipGain(c, t - c.start), this.audio!.currentTime, 0.01)
+        const g = v.gain.gain, ac = this.audio!
+        if (playing && !preroll && !tr?.muted) {
+          // ramp on the audio clock to the gain the clip has one frame from now, so fades/transitions are not a frame late
+          const dt = 1 / 60
+          g.cancelScheduledValues(ac.currentTime); g.setValueAtTime(g.value, ac.currentTime)
+          g.linearRampToValueAtTime(clipGain(c, Math.min(c.dur, t - c.start + dt)), ac.currentTime + dt)
+        } else g.setTargetAtTime(tr?.muted || preroll ? 0 : clipGain(c, t - c.start), ac.currentTime, 0.01)
       }
       if (playing) {
         if (v.el.playbackRate !== c.speed) v.el.playbackRate = c.speed
+        const now = performance.now(), lag = target - v.el.currentTime
         if (v.el.paused) {
-          if (Math.abs(v.el.currentTime - target) > 0.04) { v.el.currentTime = target; v.lastSeek = target }
+          // one seek, then let it start: re-seeking every frame while a (slow) video seek is in flight never lets it play
+          if (Math.abs(lag) > 0.04 && !v.el.seeking && now - (v.corrAt || 0) > 300) { v.el.currentTime = target + (v.lead || 0); v.lastSeek = target; v.corrAt = now }
           v.el.play().catch(() => {})
-        } else if (Math.abs(v.el.currentTime - target) > 0.3 && !v.el.seeking) {
-          v.el.currentTime = target; v.lastSeek = target
+        } else if (Math.abs(lag) > 0.08 && !v.el.seeking && now - (v.corrAt || 0) > 300) {
+          // the element starts/seeks late by a fairly constant amount: learn it and seek that far ahead next time
+          v.lead = Math.min(0.5, Math.max(0, (v.lead || 0) + lag))
+          v.el.currentTime = target + v.lead; v.lastSeek = target; v.corrAt = now
         }
       } else {
         if (!v.el.paused) v.el.pause()
