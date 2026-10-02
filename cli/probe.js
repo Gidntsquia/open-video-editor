@@ -117,30 +117,37 @@ const progressTo = (r, a0, b) => (r.stopped ? Math.min(b, a0 + r.t) : b)
 export async function scenes(mi, rg, thr = 0.3) {
   if (!(thr > 0 && thr < 1)) fail('--thr must be between 0 and 1')
   const vi = videoInput(mi)
+  const chunk = async (a, b, first) => {
+    const a0 = a > 0 ? Math.max(0, a - 0.25) : 0
+    // proxy compression shifts scores a little: the proxy proposes candidates at a lower threshold, clear hits are kept, borderline ones are confirmed on the source
+    const pthr = vi.proxy ? thr * 0.8 : thr
+    const r = await ff(['-skip_loop_filter', 'all', '-flags2', '+fast', '-ss', a0, '-to', b, '-i', vi.path, '-an', '-vf', `scale=320:-2:flags=fast_bilinear,select='gt(scene,${pthr})',${vi.proxy ? 'metadata=print' : 'showinfo'}`, '-f', 'null', '-'], { onProgress: (t) => pct(rg.from, rg.to)(a0 + t) })
+    if (r.stopped === 'timeout') return { timeout: 1 }
+    const t = []; const edge = []
+    if (vi.proxy) {
+      for (const m of r.err.matchAll(/pts_time:([\d.]+)[^\n]*\n[^\n]*scene_score=([\d.]+)/g)) { const v = r2(a0 + parseFloat(m[1])); if (v < a - 1e-6) continue; if (parseFloat(m[2]) >= thr * 1.15) t.push(v); else edge.push(v) }
+    } else for (const m of r.err.matchAll(/pts_time:([\d.]+)/g)) { const v = a0 + parseFloat(m[1]); if (v >= a - 1e-6) t.push(r2(v)) }
+    let stop = b
+    for (const c of edge.sort((x, y) => x - y)) {
+      if (left() < 1200 && c - 0.01 > a + (first ? 0.5 : 0.05)) { stop = r2(c - 0.01); break }
+      const s0 = Math.max(0, c - 1.5)
+      const q = await ff(['-ss', s0, '-to', c + 0.6, '-i', mi.file, '-an', '-vf', `scale=320:-2:flags=fast_bilinear,select='gt(scene,${thr})',showinfo`, '-f', 'null', '-'], { budget: false })
+      if ([...q.err.matchAll(/pts_time:([\d.]+)/g)].some((m) => Math.abs(s0 + parseFloat(m[1]) - c) <= 0.5)) t.push(c)
+    }
+    return { t: t.filter((v) => v <= stop + 1e-6), stop }
+  }
   const out = await ranged({
     id: mi.id, kind: 'scenes', args: `thr=${thr}`, a: rg.from, b: rg.to,
     async compute(a, b) {
-      const a0 = a > 0 ? Math.max(0, a - 0.25) : 0
-      // proxy compression shifts scores a little: the proxy proposes candidates at a lower threshold, clear hits are kept, borderline ones are confirmed on the source
-      const pthr = vi.proxy ? thr * 0.8 : thr
-      const keep = clock.budget; if (vi.proxy) clock.budget = Math.max(keep * 0.6, keep - 1.0) // leave room for confirming borderline cuts on the source
-      let r; try { r = await ff(['-skip_loop_filter', 'all', '-flags2', '+fast', '-ss', a0, '-to', b, '-i', vi.path, '-an', '-vf', `scale=320:-2:flags=fast_bilinear,select='gt(scene,${pthr})',${vi.proxy ? 'metadata=print' : 'showinfo'}`, '-f', 'null', '-'], { onProgress: (t) => pct(rg.from, rg.to)(a0 + t) }) } finally { clock.budget = keep }
-      if (r.stopped === 'timeout') return { timeout: 1 }
-      let t = []; const edge = []
-      if (vi.proxy) {
-        for (const m of r.err.matchAll(/pts_time:([\d.]+)[^\n]*\n[^\n]*scene_score=([\d.]+)/g)) { const v = r2(a0 + parseFloat(m[1])); if (v < a - 1e-6) continue; if (parseFloat(m[2]) >= thr * 1.15) t.push(v); else edge.push(v) }
-      } else for (const m of r.err.matchAll(/pts_time:([\d.]+)/g)) { const v = a0 + parseFloat(m[1]); if (v >= a - 1e-6) t.push(r2(v)) }
-      let to = progressTo(r, a0, b)
-      if (edge.length) {
-        let did = 0
-        for (const c of edge) {
-          if (left() < 1500 && (did || c - 0.01 > a + 1) && c - 0.01 > a) { to = Math.min(to, c - 0.01); break }
-          const s0 = Math.max(0, c - 1.5)
-          const q = await ff(['-ss', s0, '-to', c + 0.6, '-i', mi.file, '-an', '-vf', `scale=320:-2:flags=fast_bilinear,select='gt(scene,${thr})',showinfo`, '-f', 'null', '-'], { budget: false })
-          did++
-          if ([...q.err.matchAll(/pts_time:([\d.]+)/g)].some((m) => Math.abs(s0 + parseFloat(m[1]) - c) <= 0.5)) t.push(c)
-        }
-        t = t.filter((v) => v <= to + 1e-6).sort((x, y) => x - y)
+      // scan in short chunks: ffmpeg's own progress is unreliable behind select (dropped frames don't advance it), so the budget is checked between chunks and every call finishes at least one chunk
+      const CH = vi.proxy ? 40 : 12
+      let t = [], to = a
+      while (to < b - 1e-6) {
+        if (to > a && left() < 1200) break
+        const e = Math.min(b, to + (to === a ? 6 : CH)), r = await chunk(to, e, to === a)
+        if (r.timeout) { if (to > a) break; return { timeout: 1 } }
+        t.push(...r.t); to = r.stop
+        if (to < e) break
       }
       return { items: t, to }
     },
