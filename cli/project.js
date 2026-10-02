@@ -1,6 +1,7 @@
 // Pure project model + edit ops, mirroring src/store.ts (addFromMedia, split, remove, rippleTrim, setSpeed, addTransition, overwrite).
 import fs from 'node:fs'
-import { sequenceEnd } from '../shared/math.js'
+import { sequenceEnd, typeFromName, TRANSITION_NAMES } from '../shared/math.js'
+import * as E from '../shared/edit.js'
 import { Err, fail, toLocal, r2, r3 } from './util.js'
 
 export const TRACKS = [
@@ -15,7 +16,7 @@ export function loadProject(text, file) {
   let d
   try { d = JSON.parse(text) } catch { fail(`${file} is not valid JSON`) }
   if (!d || typeof d !== 'object' || !Array.isArray(d.clips) || typeof d.media !== 'object' || !d.width || !d.height || !d.fps) fail(`${file} is not an .ovep project`)
-  return { version: 1, width: d.width, height: d.height, fps: d.fps, media: d.media || {}, tracks: d.tracks || structuredClone(TRACKS), clips: d.clips }
+  return { version: 1, width: d.width, height: d.height, fps: d.fps, media: d.media || {}, tracks: d.tracks || structuredClone(TRACKS), clips: E.migrateClips(d.clips) }
 }
 export const serialize = (p) => JSON.stringify({ version: 1, width: p.width, height: p.height, fps: p.fps, media: p.media, tracks: p.tracks, clips: p.clips }, null, 1)
 
@@ -61,8 +62,10 @@ export function overwrite(p, ids) {
       if (c.link && i > 0) { if (!links.has(c.link + i)) links.set(c.link + i, nid({ ...p, clips: [...p.clips, ...out] }, 'l')); link = links.get(c.link + i) }
       const cut = a - c.start
       out.push({ ...structuredClone(c), id: i === 0 ? c.id : nid({ ...p, clips: [...p.clips, ...out] }, 'c'), link, start: a, in: c.in + cut * c.speed, dur: b - a,
-        keys: c.keys.map((k) => ({ t: k.t - cut, v: k.v })), transition: a > c.start + EPS ? 0 : c.transition,
-        transOut: b < end - EPS ? 0 : c.transOut, fadeIn: a > c.start + EPS ? 0 : c.fadeIn, fadeOut: b < end - EPS ? 0 : c.fadeOut })
+        keys: c.keys.map((k) => ({ t: k.t - cut, v: k.v })), fadeIn: a > c.start + EPS ? 0 : c.fadeIn, fadeOut: b < end - EPS ? 0 : c.fadeOut })
+      const n = out[out.length - 1]
+      if (a > c.start + EPS) E.clearIn(n)
+      if (b < end - EPS) E.clearOut(n)
     })
   }
   p.clips = out
@@ -104,8 +107,9 @@ export function split(p, t, ids) {
     const cut = t - c.start
     let nl; if (c.link) { if (!links.has(c.link)) links.set(c.link, nid({ ...p, clips: [...p.clips, ...add] }, 'l')); nl = links.get(c.link) }
     add.push({ ...structuredClone(c), id: nid({ ...p, clips: [...p.clips, ...add] }, 'c'), link: nl, start: t, in: c.in + cut * c.speed, dur: c.dur - cut,
-      transition: 0, fadeIn: 0, keys: c.keys.map((k) => ({ t: k.t - cut, v: k.v })) })
-    changed.set(c.id, { ...c, dur: cut, transOut: 0, fadeOut: 0 })
+      fadeIn: 0, keys: c.keys.map((k) => ({ t: k.t - cut, v: k.v })) })
+    E.clearIn(add[add.length - 1])
+    changed.set(c.id, E.clearOut({ ...c, dur: cut, fadeOut: 0 }))
   }
   p.clips = [...p.clips.map((c) => changed.get(c.id) || c), ...add]
   return add.map((c) => c.id)
@@ -132,23 +136,32 @@ export function setSpeed(p, ids, speed) {
   return sp
 }
 
-export function addTransition(p, id, d) {
-  const b = find(p, id); if (!(d > 0)) fail('dur must be > 0')
-  const partners = p.clips.filter((c) => c.link && c.link === b.link)
-  const pairs = []
-  for (const cur of [b, ...partners.filter((x) => x.id !== b.id)]) {
-    const prev = p.clips.filter((c) => c.trackId === cur.trackId && c.id !== cur.id && c.kind !== 'title' && Math.abs(c.start + c.dur - cur.start) < 0.05).sort((x, y) => y.start - x.start)[0]
-    if (prev) pairs.push([prev, cur])
-  }
-  if (!pairs.length) fail('dissolve needs a clip ending exactly where this one starts on the same track')
-  for (const [prev, cur] of pairs) {
-    const m = prev.mediaId ? p.media[prev.mediaId] : undefined
-    const handle = m ? m.dur - (prev.in + prev.dur * prev.speed) : 0
-    const ext = Math.min(d, handle / prev.speed)
-    prev.dur += ext; prev.transOut = d
-    cur.start -= d - ext; cur.transition = d
-  }
+/** edgeSpec: <clipId>:in|out or <clipA>/<clipB> -> {a,b} */
+export function parseEdge(p, spec) {
+  const m = /^(\w+):(in|out)$/.exec(spec)
+  if (m) { find(p, m[1]); return E.edgeOf(p.clips, m[1], m[2] === 'in' ? 'l' : 'r') }
+  const q = /^(\w+)\/(\w+)$/.exec(spec)
+  if (q) { find(p, q[1]); find(p, q[2]); return { a: q[1], b: q[2] } }
+  fail('edge must be <clipId>:in|out or <clipA>/<clipB>')
 }
+
+export function setTransition(p, edgeSpec, o = {}) {
+  const edge = parseEdge(p, edgeSpec)
+  let type = 'crossdissolve'
+  if (o.type != null) { type = typeFromName(o.type); if (!type) fail(`unknown transition type "${o.type}"; one of ${Object.keys(TRANSITION_NAMES).join(", ")}`) }
+  const dur = o.dur ?? 1; if (!(dur > 0)) fail('dur must be > 0')
+  if (o.align != null && !(o.align in E.ALIGN)) fail('align must be centre|start|end')
+  const r = E.applyEdge(p.clips, p.media, p.fps, edge, { type, dur, align: o.align ?? 'centre', alsoAudio: o.audio ?? true, audioType: o.audioType })
+  if (r.error) fail(r.error)
+  p.clips = r.clips
+  return { dur: r.dur, req: r.req, short: r.short, type }
+}
+export function removeTransition(p, edgeSpec) {
+  const edge = parseEdge(p, edgeSpec)
+  if (!E.edgeInfo(p.clips, edge)) fail('no transition at that edge')
+  p.clips = E.removeEdge(p.clips, edge)
+}
+export function addTransition(p, id, d) { return setTransition(p, `${id}:in`, { dur: d, type: 'crossdissolve', align: 'start' }) }
 
 /** Reject anything the app could not load or export. Runs on the modified copy before it replaces the project. */
 export function validate(p) {
@@ -178,7 +191,7 @@ export function showLines(p, withMedia) {
     const tr = trackOf(p, c.trackId)
     const fx = []
     if (c.fadeIn) fx.push(`fi=${f2(c.fadeIn)}`); if (c.fadeOut) fx.push(`fo=${f2(c.fadeOut)}`)
-    if (c.transition) fx.push(`dis=${f2(c.transition)}`)
+    if (c.transition) fx.push(`${c.transType || 'crossdissolve'}=${f2(c.transition)}`)
     if (c.brightness !== 1) fx.push(`bri=${r2(c.brightness)}`); if (c.contrast !== 1) fx.push(`con=${r2(c.contrast)}`); if (c.saturation !== 1) fx.push(`sat=${r2(c.saturation)}`)
     const cr = c.crop; if (cr && (cr.l || cr.r || cr.t || cr.b)) fx.push(`crop=${r2(cr.l)},${r2(cr.r)},${r2(cr.t)},${r2(cr.b)}`)
     if (c.scale !== 1) fx.push(`sc=${r2(c.scale)}`); if (c.posX || c.posY) fx.push(`pos=${Math.round(c.posX)},${Math.round(c.posY)}`)

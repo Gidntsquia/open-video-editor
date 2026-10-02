@@ -88,10 +88,11 @@ export function check(p) {
     for (let i = 1; i < cs.length; i++) {
       const a = cs[i - 1], b = cs[i]; const ae = a.start + a.dur
       if (b.start > ae + fr) f.push({ w: 'gap', track: t.id, t: [r2(ae), r2(b.start)] })
-      else if (b.start < ae - Math.max(fr, b.transition || 0) - 1e-3) f.push({ w: 'overlap', track: t.id, ids: [a.id, b.id], t: [r2(b.start), r2(Math.min(ae, b.start + b.dur))] })
+      else if (b.start < ae - Math.max(fr, b.transition || 0, a.transOut || 0) - 1e-3) f.push({ w: 'overlap', track: t.id, ids: [a.id, b.id], t: [r2(b.start), r2(Math.min(ae, b.start + b.dur))] })
     }
   }
   for (const c of p.clips) {
+    if ((c.transReq ?? 0) > (c.transition || 0) + 1e-3) f.push({ w: 'shortened', id: c.id, req: r2(c.transReq), dur: r2(c.transition), msg: `Insufficient media: shortened to ${(c.transition || 0).toFixed(2)} s` })
     if (c.kind === 'title') continue
     const m = p.media[c.mediaId]
     if (!m) { f.push({ w: 'nomedia', id: c.id }); continue }

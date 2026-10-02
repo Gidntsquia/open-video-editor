@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { sequenceEnd } from '../shared/math.js'
 import * as P from './project.js'
+import * as E from '../shared/edit.js'
 import * as U from './probe.js'
 import * as R from './render.js'
 import * as J from './jobs.js'
@@ -27,7 +28,11 @@ PROJECT (single call: changes auto-save to -p; batch: only on "save")
                                      start in dur | crop.l/r/t/b (0-1) | titles: text font size color x y
   keys <id> t:v,t:v | -              volume keyframes (t = secs from clip start, v = gain); - clears
   fade <id> in=s out=s               audio fade in/out
-  dissolve <id> [dur=1]              dissolve from the previous clip on the same track
+  dissolve <id> [dur=1]              alias: Cross Dissolve at the start of <id> (start-aligned)
+  transition <edge> type=<name> [dur=1 align=centre|start|end audio=0|1]   edge = <clipId>:in|out or <clipA>/<clipB>
+                                     types: crossdissolve dipblack dipwhite filmdissolve wipeleft|right|up|down pushleft|right|up|down crosszoom blurdissolve
+                                     (audio edges: constpower constgain expfade). Short media -> shortened, reply has short:1
+  rm-transition <edge>               remove it (restores the clips' overlap)
   title @t [dur=3] text="Hi\\nthere" [font=Arial size=96 color=#fff x=.5 y=.5 track=V2]
   track <V2|A1> mute|unmute|hide|show   (mute = audio tracks, hide = video tracks)
   undo                               batch only: revert the last changing command
@@ -53,9 +58,9 @@ SELF-CHECK
   check                              lint: gaps, overlaps, reads past media end, missing files, muted/hidden tracks
 Export to MP4 happens in the app: open the .ovep there, review, export.`
 
-const MUT = new Set(['new', 'import', 'add', 'cut', 'rm', 'move', 'trim', 'speed', 'set', 'keys', 'fade', 'dissolve', 'title', 'track'])
-const NUMERIC = ['volume', 'brightness', 'contrast', 'saturation', 'scale', 'posX', 'posY', 'fadeIn', 'fadeOut', 'transition', 'transOut', 'start', 'in', 'dur', 'size', 'x', 'y']
-const STRINGS = ['text', 'font', 'color']
+const MUT = new Set(['new', 'import', 'add', 'cut', 'rm', 'move', 'trim', 'speed', 'set', 'keys', 'fade', 'dissolve', 'transition', 'rm-transition', 'title', 'track'])
+const NUMERIC = ['volume', 'brightness', 'contrast', 'saturation', 'scale', 'posX', 'posY', 'fadeIn', 'fadeOut', 'transition', 'transOut', 'transAlign', 'start', 'in', 'dur', 'size', 'x', 'y']
+const STRINGS = ['text', 'font', 'color', 'transType', 'transOutType']
 
 const ctx = { proj: null, file: null, history: [], batch: false, sizeLocked: false, loaded: false }
 const need = () => ctx.proj || fail('no project: pass -p file.ovep or run new')
@@ -166,8 +171,8 @@ async function mutate(cmd, a) {
         const ns = head != null ? s0 : d0, ne = tail != null ? e0 : e
         const cut = ns - d0
         x.in += cut * x.speed; x.start = ns; x.dur = ne - ns
-        if (cut > 0) { x.transition = 0; x.fadeIn = 0 }
-        if (ne < e - 1e-6) { x.transOut = 0; x.fadeOut = 0 }
+        if (cut > 0) { E.clearIn(x); x.fadeIn = 0 }
+        if (ne < e - 1e-6) { E.clearOut(x); x.fadeOut = 0 }
         x.keys = x.keys.map((k) => ({ t: k.t - cut, v: k.v }))
       }
       P.overwrite(p, grp); res = { c: grp }
@@ -228,7 +233,20 @@ async function mutate(cmd, a) {
     case 'dissolve': {
       const [id] = pos(a, 1, 'dissolve <id> [dur=1]')
       const d = a.kv.dur != null ? parseTime(a.kv.dur) : a.pos[1] != null ? parseTime(a.pos[1]) : 1
-      P.addTransition(p, id, d); res = { c: id, dur: r2(d) }
+      const r = P.addTransition(p, id, d); res = { c: id, dur: r2(r.dur) }
+      if (r.short) res.short = 1
+      break
+    }
+    case 'transition': {
+      const [spec] = pos(a, 1, 'transition <edge> type=<name> [dur=1 align=centre|start|end]')
+      const r = P.setTransition(p, spec, { type: a.kv.type, dur: a.kv.dur != null ? parseTime(a.kv.dur) : undefined, align: a.kv.align, audio: a.kv.audio != null ? a.kv.audio !== '0' : undefined })
+      res = { edge: spec, type: r.type, dur: r2(r.dur) }
+      if (r.short) { res.short = 1; res.req = r2(r.req); res.msg = `Insufficient media: shortened to ${r.dur.toFixed(2)} s` }
+      break
+    }
+    case 'rm-transition': {
+      const [spec] = pos(a, 1, 'rm-transition <edge>')
+      P.removeTransition(p, spec); res = { edge: spec }
       break
     }
     case 'title': {
