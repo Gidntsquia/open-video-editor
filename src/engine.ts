@@ -2,6 +2,15 @@ import { useStore } from './store'
 import type { Clip, Media } from './types'
 import { placement, clipGain, sourceTime, hasColor, colorParams, sequenceEnd, activeTrans, transFx, layerRect, DIP_COLOR, BLUR_FRAC } from '../shared/math.js'
 
+/** Source time to seek the <video> to so it shows the frame the exporter shows at timeline time t.
+ *  ffmpeg (`-ss in`) starts at the first source frame at or after `in`; Chromium shows the frame containing the seek
+ *  time, so aim at the middle of the wanted frame (exact frame boundaries round either way). */
+function previewSeek(c: Clip, m: Media, t: number) {
+  const f = Math.max(1, m.fps || 30)
+  const in0 = Math.ceil(c.in * f - 1e-6) / f
+  const off = (t - c.start) * (c.speed || 1)
+  return in0 + (Math.floor(off * f + 1e-6) + 0.5) / f
+}
 type VEl = { el: HTMLVideoElement; lastSeek: number; gain?: GainNode; src: string }
 
 /** Real-time preview: one <video> per active clip, composited on a canvas; audio via WebAudio gain per clip. */
@@ -116,8 +125,8 @@ export class Engine {
       }
     })
     const cl = Math.min(Math.max(t, c.start), c.start + c.dur)
-    el.currentTime = sourceTime(c, cl)
-    v = { el, lastSeek: el.currentTime, src }
+    el.currentTime = previewSeek(c, m, cl)
+    v = { el, lastSeek: sourceTime(c, cl), src }
     if (c.kind === 'audio') {
       if (!this.audio) this.audio = new AudioContext()
       const node = this.audio.createMediaElementSource(el)
@@ -191,7 +200,7 @@ export class Engine {
         }
       } else {
         if (!v.el.paused) v.el.pause()
-        if (Math.abs(v.lastSeek - target) > 0.5 / s.fps) { v.el.currentTime = target; v.lastSeek = target }
+        if (Math.abs(v.lastSeek - target) > 0.5 / s.fps) { v.el.currentTime = previewSeek(c, m, t); v.lastSeek = target }
       }
     }
     for (const id of [...this.els.keys()]) if (!need.has(id)) this.release(id)

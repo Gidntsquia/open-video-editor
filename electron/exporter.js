@@ -76,17 +76,24 @@ function segmentChain(chains, c, pl, k, i, sg, cur, outLabel) {
   const frame = sg.frame
   const pConst = frame ? n(f.p) : null
   const pG = pConst ?? `T/${n(d)}` // inside geq (local time T)
-  const pT = pConst ?? `t/${n(d)}` // inside scale (local time t)
   const pO = pConst ?? `(t-${n(S)})/${n(d)}` // inside overlay (timeline time t)
-  const sE = withP(spec.s, pT)
-  if (spec.s !== '1') head += `,scale=w='max(2,2*floor(${pl.dw}*(${sE})/2))':h='max(2,2*floor(${pl.dh}*(${sE})/2))':eval=frame`
+  const zoom = spec.s !== '1'
+  // Zoom: pad the layer to the full frame and magnify about the layer centre with zoompan (constant frame size;
+  // a per-frame `scale` changes the frame size on the fly, which overlay does not follow). zoompan: time = local
+  // seconds from 0, zoom >= 1 (Cross Zoom only magnifies).
+  if (zoom) {
+    const zE = `max(1,${withP(spec.s, pConst ?? `time/${n(d)}`)})`
+    const cx = pl.dx + pl.dw / 2, cy = pl.dy + pl.dh / 2
+    head += `,pad=${W}:${H}:${pl.dx}:${pl.dy}:color=black@0,zoompan=z='${zE}':x='${cx}*(1-1/zoom)':y='${cy}*(1-1/zoom)':d=1:fps=${pl.fps}:s=${W}x${H},format=yuva420p`
+  }
   const blur = spec.blur !== '0'
   const alphaE = withP(spec.alpha, pG)
   const rectE = spec.rect ? spec.rect.map((r) => withP(r, pG)) : null
-  const rect = rectE ? `*gte(X+${pl.dx},(${rectE[0]})*${W})*lt(X+${pl.dx},(${rectE[2]})*${W})*gte(Y+${pl.dy},(${rectE[1]})*${H})*lt(Y+${pl.dy},(${rectE[3]})*${H})` : ''
+  const lx = zoom ? 0 : pl.dx, ly = zoom ? 0 : pl.dy
+  const rect = rectE ? `*gte(X+${lx},(${rectE[0]})*${W})*lt(X+${lx},(${rectE[2]})*${W})*gte(Y+${ly},(${rectE[1]})*${H})*lt(Y+${ly},(${rectE[3]})*${H})` : ''
   const geq = (aexpr) => `geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='${aexpr}'`
-  const ox = spec.dx === '0' && spec.s === '1' ? `${pl.dx}` : `'${pl.dx + pl.dw / 2}-overlay_w/2+(${withP(spec.dx, pO)})*${W}'`
-  const oy = spec.dy === '0' && spec.s === '1' ? `${pl.dy}` : `'${pl.dy + pl.dh / 2}-overlay_h/2+(${withP(spec.dy, pO)})*${H}'`
+  const ox = spec.dx === '0' ? `${lx}` : `'${lx}+(${withP(spec.dx, pO)})*${W}'`
+  const oy = spec.dy === '0' ? `${ly}` : `'${ly}+(${withP(spec.dy, pO)})*${H}'`
   const en = `enable='between(t,${n(S)},${n(S + d)})'`
   const shift = `setpts=PTS+${n(S)}/TB`
   let base = cur
