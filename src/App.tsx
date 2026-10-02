@@ -283,7 +283,7 @@ export default function App() {
   }
   useEffect(() => {
     // empty launch: pre-fill the bin with a few read-only sample clips
-    window.api.sampleClips?.().then((ps: string[]) => { if (ps.length && !Object.keys(useStore.getState().media).length && !useStore.getState().projectPath) importPaths(ps).then(() => useStore.setState({ dirty: false, past: [] })) }).catch(() => {})
+    window.__ove.ready = window.api.sampleClips?.().then((ps: string[]) => { if (ps.length && !Object.keys(useStore.getState().media).length && !useStore.getState().projectPath) return importPaths(ps).then(() => useStore.setState({ dirty: false, past: [] })) }).catch(() => {})
   }, [])
   useEffect(() => {
     const name = st.projectPath ? st.projectPath.split(/[\\/]/).pop() : 'Untitled'

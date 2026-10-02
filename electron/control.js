@@ -15,7 +15,7 @@ export function startControl(cacheRoot, getWin) {
       if (t == null) return { err: 'seek needs t or clip' }; o.engine.seek(t); return { ok: 1, playhead: o.store.getState().playhead } })()`),
     open: (b) => {
       let data; try { data = JSON.parse(fs.readFileSync(b.path, 'utf8')) } catch (e) { return { err: 'cannot read ' + b.path } }
-      return js(`(() => { const o = window.__ove, s = o.store.getState(); if (s.dirty && !${b.force ? 'true' : 'false'}) return { err: 'unsaved changes in app' }; o.openData(${JSON.stringify(data)}, ${JSON.stringify(b.path)}); return { ok: 1, projectPath: ${JSON.stringify(b.path)} } })()`)
+      return js(`(async () => { const o = window.__ove; await Promise.race([o.ready, new Promise((r) => setTimeout(r, 30000))]); const s = o.store.getState(); if (s.dirty && !${b.force ? 'true' : 'false'}) return { err: 'unsaved changes in app' }; o.openData(${JSON.stringify(data)}, ${JSON.stringify(b.path)}); return { ok: 1, projectPath: ${JSON.stringify(b.path)} } })()`)
     },
     // wait for the frame to be painted (video decode after a seek), then grab the canvas
     capture: async (b) => {
