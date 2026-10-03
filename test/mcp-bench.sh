@@ -1,7 +1,7 @@
 #!/bin/bash
-# Benchmark: one run each of a job through the MCP and through `ove` via Bash, both in headless Claude Code. Usage: test/mcp-bench.sh <mcp|bash> <job1|job2>
+# Optional 3rd arg = run number (files get a -rN suffix). Benchmark: one run each of a job through the MCP and through `ove` via Bash, both in headless Claude Code. Usage: test/mcp-bench.sh <mcp|bash> <job1|job2>
 # Needs: the app running on Windows (OVE_INACTIVE=1, no CDP), repo copy at D:\ove-test with node_modules (npm.cmd install).
-route=$1; job=$2; out=/mnt/d/ove-test/cache/bench; mkdir -p "$out"
+route=$1; job=$2; run=${3:-}; tag=$job-$route${run:+-r$run}; out=/mnt/d/ove-test/cache/bench; mkdir -p "$out"
 media='D:\OBS Videos\2023-08-16 23-55-20.mp4'
 case $job in
   job1) ask="Remove the dead air from $media and show me." ;;
@@ -12,14 +12,14 @@ if [ "$route" = mcp ]; then
   cat > "$out/mcp.json" <<J
 {"mcpServers":{"ove":{"command":"node.exe","args":["D:\\\\ove-test\\\\cli\\\\mcp.js"]}}}
 J
-  prompt="$ask Use the ove MCP tools only. Save the project as D:\\ove-test\\cache\\bench\\$job-mcp.ovep. Do not export."
+  prompt="$ask Use the ove MCP tools only. Save the project as D:\\ove-test\\cache\\bench\\$tag.ovep. Do not export."
   args=(--mcp-config "$out/mcp.json" --strict-mcp-config --allowedTools "mcp__ove" --disallowedTools "Bash Edit Write Read Glob Grep Agent")
 else
-  prompt="$ask Use the ove CLI through Bash (node cli/ove.js help). Save the project as /mnt/d/ove-test/cache/bench/$job-bash.ovep. Do not export; tell me to open it in the app."
+  prompt="$ask Use the ove CLI through Bash (node cli/ove.js help). Save the project as /mnt/d/ove-test/cache/bench/$tag.ovep. Do not export; tell me to open it in the app."
   args=(--strict-mcp-config --allowedTools "Bash Read" --disallowedTools "Edit Write Glob Grep Agent")
 fi
-claude -p "$prompt" --output-format stream-json --verbose --no-session-persistence --max-budget-usd 6 --permission-mode dontAsk "${args[@]}" > "$out/$job-$route.jsonl" 2> "$out/$job-$route.err"
-python3 - "$out/$job-$route.jsonl" <<'P'
+claude -p "$prompt" --output-format stream-json --verbose --no-session-persistence --max-budget-usd 6 --permission-mode dontAsk "${args[@]}" > "$out/$tag.jsonl" 2> "$out/$tag.err"
+python3 - "$out/$tag.jsonl" <<'P'
 import json,sys
 calls=0; turns=set(); res=None
 for l in open(sys.argv[1]):
