@@ -28,14 +28,14 @@ const flag = (a, ...ks) => ks.flatMap((k) => (a[k] == null || a[k] === false ? [
 const kv = (a, ...ks) => ks.filter((k) => a[k] != null).map((k) => `${k}=${a[k]}`)
 const rng = (a) => flag(a, 'from', 'to', 'budget', 'bg')
 const TOOLS = {
-  scan: ['Fast overview of a media file: scenes, loudness, silences.', { ...M, ...PR }, (a) => ['scan', a.m, ...rng(a)]],
+  scan: ['Overview: scenes, loudness, silences.', { ...M, ...PR }, (a) => ['scan', a.m, ...rng(a)]],
   probe: ['Media duration, size, fps, audio, codec.', M, (a) => ['probe', a.m]],
   scenes: ['Scene-cut times.', { ...M, thr: OPT(N), ...PR }, (a) => ['scenes', a.m, ...flag(a, 'thr'), ...rng(a)]],
   silence: ['Silent ranges [[start,end],..].', { ...M, db: OPT(N), min: OPT(N), ...PR }, (a) => ['silence', a.m, ...flag(a, 'db', 'min'), ...rng(a)]],
   loud: ['Loudest windows [t,peak_db,rms_db].', { ...M, top: OPT(N), win: OPT(N), ...PR }, (a) => ['loud', a.m, ...flag(a, 'top', 'win'), ...rng(a)]],
   frames: ['Frames as images: every="30s" or at="10,20".', { ...M, every: OPT(S), at: OPT(S), ...PR }, (a) => ['frames', a.m, ...flag(a, 'every', 'at'), ...rng(a)]],
   sheet: ['One contact-sheet image with timestamps.', { ...M, cols: OPT(N), n: OPT(N), ...PR }, (a) => ['sheet', a.m, ...flag(a, 'cols', 'n'), ...rng(a)]],
-  transcript: ['Speech transcript [{t,d,text}]; long, use bg and poll job.', { ...M, ...PR }, (a) => ['transcript', a.m, ...rng(a)]],
+  transcript: ['Speech transcript; long, use bg and poll job.', { ...M, ...PR }, (a) => ['transcript', a.m, ...rng(a)]],
   new: ['New empty project; path = where it auto-saves.', { path: OPT(S), w: OPT(N), h: OPT(N), fps: OPT(N) }, (a) => ['new', ...(a.w ? ['-w', String(a.w)] : []), ...(a.h ? ['-h', String(a.h)] : []), ...(a.fps ? ['-fps', String(a.fps)] : [])]],
   import: ['Add media files to the project.', { paths: z.array(S), ...SIL }, (a) => ['import', ...a.paths]],
   add: ['Put media on the timeline (video + linked audio).', { m: S.describe('media id'), track: OPT(S), at: OPT(S), in: OPT(S), dur: OPT(S), ...SIL }, (a) => ['add', a.m, ...(a.track ? [a.track] : []), ...(a.at != null ? ['@' + a.at] : []), ...kv(a, 'in', 'dur')]],
@@ -44,11 +44,11 @@ const TOOLS = {
   move: ['Move a clip (group) to time at, optional track.', { ...ID, at: S, track: OPT(S), ...SIL }, (a) => ['move', a.id, '@' + a.at, ...(a.track ? [a.track] : [])]],
   trim: ['Trim by source in/out or timeline start/end.', { ...ID, in: OPT(S), out: OPT(S), start: OPT(S), end: OPT(S), ...SIL }, (a) => ['trim', a.id, ...kv(a, 'in', 'out', 'start', 'end')]],
   speed: ['Clip speed, 0.5 = slow.', { ...ID, x: N, ...SIL }, (a) => ['speed', a.id, String(a.x)]],
-  set: ['Set clip props (volume, scale, posX, fadeIn, crop.l, text...).', { ...ID, props: z.record(S, z.union([S, N])), ...SIL }, (a) => ['set', a.id, ...Object.entries(a.props).map(([k, v]) => `${k}=${v}`)]],
+  set: ['Set clip props (volume, scale, posX, text...).', { ...ID, props: z.record(S, z.union([S, N])), ...SIL }, (a) => ['set', a.id, ...Object.entries(a.props).map(([k, v]) => `${k}=${v}`)]],
   keys: ['Volume keyframes "t:v,t:v"; "-" clears.', { ...ID, keys: S, ...SIL }, (a) => ['keys', a.id, a.keys]],
   fade: ['Audio fade in/out seconds.', { ...ID, in: OPT(S), out: OPT(S), ...SIL }, (a) => ['fade', a.id, ...kv(a, 'in', 'out')]],
   dissolve: ['Cross dissolve at the start of a clip.', { ...ID, dur: OPT(S), ...SIL }, (a) => ['dissolve', a.id, ...kv(a, 'dur')]],
-  transition: ['Transition on edge c3:in, c3:out or c1/c2; type crossdissolve, dipblack, wipeleft...', { edge: S, type: S, dur: OPT(S), align: OPT(S), audio: OPT(S), ...SIL }, (a) => ['transition', a.edge, ...kv(a, 'type', 'dur', 'align', 'audio')]],
+  transition: ['Transition on edge (c3:in, c3:out, c1/c2); type e.g. crossdissolve.', { edge: S, type: S, dur: OPT(S), align: OPT(S), audio: OPT(S), ...SIL }, (a) => ['transition', a.edge, ...kv(a, 'type', 'dur', 'align', 'audio')]],
   rm_transition: ['Remove a transition edge.', { edge: S, ...SIL }, (a) => ['rm-transition', a.edge]],
   title: ['Add a text title at time at.', { at: S, text: S, dur: OPT(S), font: OPT(S), size: OPT(N), color: OPT(S), x: OPT(N), y: OPT(N), track: OPT(S), ...SIL }, (a) => ['title', '@' + a.at, ...kv(a, 'dur', 'text', 'font', 'size', 'color', 'x', 'y', 'track')]],
   track: ['mute/unmute an audio track, hide/show a video track.', { id: S, op: z.enum(['mute', 'unmute', 'hide', 'show']), ...SIL }, (a) => ['track', a.id, a.op]],
@@ -200,4 +200,18 @@ server.registerResource('scan', new ResourceTemplate('ove://media/{id}/scan', { 
 // the SDK adds {execution:{taskSupport:'forbidden'}} to every tool; it only costs tokens
 for (const t of Object.values(server._registeredTools)) t.execution = undefined
 
+// Keep tools/list small (it is paid in every Claude Code message): drop $schema and the hidden `silent` flag (still accepted; the `ove` tool documents it).
+{
+  const h = server.server._requestHandlers.get('tools/list')
+  server.server._requestHandlers.set('tools/list', async (req, extra) => {
+    const r = await h(req, extra)
+    for (const t of r.tools) {
+      delete t.inputSchema.$schema
+      if (t.name !== 'ove' && t.inputSchema.properties) delete t.inputSchema.properties.silent
+      if (['scan', 'scenes', 'silence', 'loud', 'frames', 'sheet'].includes(t.name)) { delete t.inputSchema.properties.budget; delete t.inputSchema.properties.bg } // still accepted
+      if (t.inputSchema.properties && !Object.keys(t.inputSchema.properties).length) delete t.inputSchema.properties
+    }
+    return r
+  })
+}
 await server.connect(new StdioServerTransport())

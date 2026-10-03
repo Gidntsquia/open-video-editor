@@ -115,11 +115,16 @@ export function split(p, t, ids) {
   return add.map((c) => c.id)
 }
 
+// ripple: merge the removed ranges, then move each later clip up by the removed length that lies before it (several separate ids stay in sync)
+function rippleShift(del) {
+  const iv = del.map((c) => [c.start, c.start + c.dur]).sort((a, b) => a[0] - b[0]); const m = []
+  for (const r of iv) { const l = m[m.length - 1]; if (l && r[0] <= l[1] + 1e-6) l[1] = Math.max(l[1], r[1]); else m.push([...r]) }
+  return (t) => m.reduce((s, [a, b]) => (b <= t + 1e-6 ? s + (b - a) : s), 0)
+}
 export function remove(p, ids, ripple) {
   const grp = new Set(group(p, ids)); const del = p.clips.filter((c) => grp.has(c.id))
-  const gs = Math.min(...del.map((c) => c.start)), ge = Math.max(...del.map((c) => c.start + c.dur))
-  const trs = new Set(del.map((c) => c.trackId))
-  p.clips = p.clips.filter((c) => !grp.has(c.id)).map((c) => (ripple && trs.has(c.trackId) && c.start >= ge - 1e-6 ? { ...c, start: c.start - (ge - gs) } : c))
+  const trs = new Set(del.map((c) => c.trackId)); const sh = rippleShift(del)
+  p.clips = p.clips.filter((c) => !grp.has(c.id)).map((c) => { const d = ripple && trs.has(c.trackId) ? sh(c.start) : 0; return d ? { ...c, start: c.start - d } : c })
   return del.length
 }
 

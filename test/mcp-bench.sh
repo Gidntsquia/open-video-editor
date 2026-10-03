@@ -21,15 +21,14 @@ fi
 claude -p "$prompt" --output-format stream-json --verbose --no-session-persistence --max-budget-usd 6 --permission-mode dontAsk "${args[@]}" > "$out/$job-$route.jsonl" 2> "$out/$job-$route.err"
 python3 - "$out/$job-$route.jsonl" <<'P'
 import json,sys
-calls=0; usage={}; res=None; names=[]
+calls=0; turns=set(); res=None
 for l in open(sys.argv[1]):
     try: e=json.loads(l)
     except: continue
     if e.get('type')=='assistant':
-        m=e['message']; usage[m['id']]=m['usage']
-        for b in m['content']:
-            if b.get('type')=='tool_use': calls+=1; names.append(b['name'])
+        m=e['message']; turns.add(m['id'])
+        calls+=sum(1 for b in m['content'] if b.get('type')=='tool_use' and b['name']!='ToolSearch')
     if e.get('type')=='result': res=e
-inp=sum(u.get('input_tokens',0) for u in usage.values()); cc=sum(u.get('cache_creation_input_tokens',0) for u in usage.values()); cr=sum(u.get('cache_read_input_tokens',0) for u in usage.values()); out=sum(u.get('output_tokens',0) for u in usage.values())
-print(json.dumps({'tool_calls':calls,'api_turns':len(usage),'input':inp,'cache_write':cc,'cache_read':cr,'output':out,'cost_usd':res and res.get('total_cost_usd'),'result':(res or {}).get('result','')[:600]},indent=1))
+u=res['usage']  # the result line has the true totals; per-message usage in the stream holds partial output counts
+print(json.dumps({'tool_calls':calls,'api_turns':len(turns),'input_new':u['input_tokens'],'cache_write':u['cache_creation_input_tokens'],'cache_read':u['cache_read_input_tokens'],'output':u['output_tokens'],'cost_usd':res.get('total_cost_usd'),'result':res.get('result','')[:600]},indent=1))
 P

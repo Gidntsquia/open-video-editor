@@ -207,10 +207,13 @@ export const useStore = create<State>((set, get) => {
       const s = get(); const grp = new Set(s.group(ids)); const del = s.clips.filter((c) => grp.has(c.id))
       if (!del.length) return
       get().pushHistory()
-      const gs = Math.min(...del.map((c) => c.start)), ge = Math.max(...del.map((c) => c.start + c.dur))
       const trs = new Set(del.map((c) => c.trackId))
+      // ripple: merge the removed ranges, move each later clip up by the removed length before it (matches cli/project.js)
+      const iv = del.map((c) => [c.start, c.start + c.dur]).sort((x, y) => x[0] - y[0]); const m: number[][] = []
+      for (const r of iv) { const l = m[m.length - 1]; if (l && r[0] <= l[1] + 1e-6) l[1] = Math.max(l[1], r[1]); else m.push([...r]) }
+      const sh = (t: number) => m.reduce((q, [x, y]) => (y <= t + 1e-6 ? q + (y - x) : q), 0)
       set((st) => ({
-        clips: st.clips.filter((c) => !grp.has(c.id)).map((c) => (ripple && trs.has(c.trackId) && c.start >= ge - 1e-6 ? { ...c, start: c.start - (ge - gs) } : c)),
+        clips: st.clips.filter((c) => !grp.has(c.id)).map((c) => { const d = ripple && trs.has(c.trackId) ? sh(c.start) : 0; return d ? { ...c, start: c.start - d } : c }),
         selection: [], dirty: true,
       }))
     },
