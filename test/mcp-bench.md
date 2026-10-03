@@ -29,15 +29,20 @@ Why more tokens can cost less: a token is not a unit of cost. Cache read is 80x 
 
 ## Standing cost of having `ove` installed, in the same units
 
-The server adds about 440 tokens (the deferred tool-name list) to the context of every session, whether or not it is called. How that is billed: once per session as a cache write (440 x $20 / M = $0.0088), then on each later message as a cache read (440 x $0.25 / M = $0.00011). The cache write repeats after the cache expires (1 h here), which I ignore.
+Scope: `ove` is registered in this repo's `.mcp.json`, not in the user config, so only sessions started in this project pay for it. The user works here only on video-editor tasks and elsewhere for everything else, so every session that carries the cost is a video-editor session; no sessions outside it are charged.
+
+The server adds about 440 tokens (the deferred tool-name list) to the context of every such session, whether or not it is called. Billing: once per session as a cache write (440 x $20 / M = $0.0088), then on each later message as a cache read (440 x $0.25 / M = $0.00011). The write repeats after the 1 h cache expiry, which I ignore.
 
 | period | assumption | tokens | USD |
 |---|---|---|---|
 | per message (after the first) | | 440 | 0.00011 |
 | one session | 30 messages | 440 x 30 | 0.012 |
-| one month | 3 sessions / day, 22 days = 66 sessions, none calling `ove` | 440 x 30 x 66 | 0.79 |
+| one month, light | 10 sessions here, 5 of them never call `ove` (e.g. app code work) | 440 x 30 x 5 | 0.06 |
+| one month, heavy | 66 sessions here (3 a day, 22 days), none call `ove` | 440 x 30 x 66 | 0.79 |
 
-Per-job saving from this bench (Bash minus MCP): job1 $0.14, job2 $0.03 (noise), mean $0.085, one run each. Break-even: the standing cost per session ($0.012) equals one job's saving after about 1 job in 7 sessions at the mean, 1 in 12 at the job1 figure, and 1 in 2.5 at the job2 figure. At 66 sessions a month, any 10 or more `ove` jobs a month at the mean saving ($0.85) beat the $0.79. Fewer than about 10 jobs a month, or if the true saving is nearer job2's $0.03, installing it costs more than it saves. The tokens-in-context unit is the wrong one for this: 440 tokens/message looks large next to the job's 300K-token reads, but it is $0.00011.
+Only the sessions that do not call `ove` count as waste. A session that does call it pays the same 440 tokens, but they are part of what the job rows already measure (the job rows include the tool-name list).
+
+Per-job saving from this bench (Bash minus MCP): job1 $0.14, job2 $0.03 (noise), mean $0.085, one run each. Because all sessions here are video-editor sessions, the realistic question is how many of them run an `ove` job. One saved job at the mean ($0.085) pays for about 7 non-`ove` sessions ($0.012 each); at job2's $0.03 it pays for 2.5. In the light month (5 non-`ove` sessions, $0.06) a single `ove` job covers it. In the heavy month ($0.79) about 10 jobs cover it. So for a video-editor-only project the standing cost is at most about $0.8 a month and, at the measured saving, is repaid by one to ten jobs; it is not a reason to avoid the server. The tokens-in-context unit is the wrong one: 440 tokens/message looks large next to a job's 300K-token reads, but it is $0.00011.
 
 Not measured: n = 1 per cell, so the per-job saving has no error bar; and the 39 schemas (3.8K tokens, loaded once when the AI searches for them) are inside the job rows already, not in the standing cost.
 
