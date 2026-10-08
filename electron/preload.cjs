@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('api', {
   exportDialog: () => ipcRenderer.invoke('export-dialog'),
   exportProject: (project, out, opts) => ipcRenderer.invoke('export', project, out, opts),
   cancelExport: () => ipcRenderer.invoke('export-cancel'),
+  onExportInfo: (cb) => ipcRenderer.on('export-info', (_e, v) => cb(v)),
   onExportProgress: (cb) => ipcRenderer.on('export-progress', (_e, v) => cb(v)),
   cacheInfo: () => ipcRenderer.invoke('cache-info'),
   clearCache: () => ipcRenderer.invoke('cache-clear'),

@@ -38,6 +38,7 @@ export async function runExport(project, out, opts) {
   const nv = opts.encArgs ? false : opts.encoder === 'gpu' ? true : opts.encoder === 'cpu' ? false : hasNvenc(ffmpeg)
   if (!opts.encArgs && opts.encoder === 'gpu' && !hasNvenc(ffmpeg)) throw new Error('GPU encoder (h264_nvenc) is not available in this ffmpeg or on this machine. Choose Auto or CPU (libx264).')
   const encName = opts.encArgs ? opts.encArgs[1] : nv ? 'h264_nvenc' : 'libx264'
+  opts.onInfo?.({ encoder: encName })
   const encArgs = opts.encArgs || (nv ? ['-c:v', 'h264_nvenc', '-preset', 'p5', '-rc', 'vbr', '-cq', '19', '-b:v', '0'] : ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-threads', String(bp.threads)])
   const threads = ['-threads', String(bp.threads), '-filter_threads', String(bp.threads), '-filter_complex_threads', String(bp.threads)]
   fs.mkdirSync(cacheDir, { recursive: true })

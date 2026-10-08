@@ -224,40 +224,40 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
   const [budget, setBudget] = useState(() => ls('ove.exportBudget', 'balanced'))
   const [encoder, setEncoder] = useState(() => ls('ove.exportEncoder', 'auto'))
   const [adv, setAdv] = useState(false)
+  const [used, setUsed] = useState('')
   useEffect(() => { try { localStorage.setItem('ove.exportBudget', budget); localStorage.setItem('ove.exportEncoder', encoder) } catch {} }, [budget, encoder])
-  useEffect(() => { window.api.onExportProgress((v: number) => setP(v)) }, [])
+  useEffect(() => { window.api.onExportProgress((v: number) => setP(v)); window.api.onExportInfo((v: any) => setUsed(v.encoder)) }, [])
   const go = async () => {
     const out = await window.api.exportDialog(); if (!out) return
     const s = useStore.getState()
     const used = new Set(s.clips.map((c) => c.mediaId).filter(Boolean))
     const media: Record<string, any> = {}
     for (const id of used) { const m = s.media[id!]; media[id!] = { path: m.path, w: m.w, h: m.h, dur: m.dur, hasAudio: m.hasAudio } }
-    setState('run'); setP(0); setMsg(out)
+    setState('run'); setP(0); setUsed(''); setMsg(out)
     const t0 = performance.now()
     try {
       const r = await window.api.exportProject({ width: s.width, height: s.height, fps: s.fps, media, tracks: s.tracks, clips: s.clips }, out, { budget, encoder })
       setState('done'); setMsg(`Saved ${r.out}\n${r.total.toFixed(2)}s, ${r.encoder}, took ${((performance.now() - t0) / 1000).toFixed(1)}s`)
-    } catch (e: any) { setState('err'); setMsg(String(e.message || e)) }
+    } catch (e: any) { setState('err'); setMsg(String(e.message || e).replace(/^Error invoking remote method 'export': (Error: )?/, '')) }
   }
   useEffect(() => { (window as any).__ove_export = go })
   return (
-    <div className="modal"><div className="dlg">
-      <h3>Export MP4 (H.264)</h3>
-      <div>{useStore.getState().width}×{useStore.getState().height} @ {useStore.getState().fps} fps · sequence length {fmtTime(sequenceEnd(useStore.getState().clips), useStore.getState().fps)}</div>
-      {state !== 'run' && <div data-budget>
-        <div>Budget</div>
-        {([['fast', 'Fast: all cores, normal priority'], ['balanced', 'Balanced: leaves 2 cores free, below-normal priority'], ['background', 'Background: half the cores, lowest priority']] as const).map(([v, l]) =>
-          <label key={v} className="trow"><input type="radio" name="budget" checked={budget === v} onChange={() => setBudget(v)} /> {l}</label>)}
+    <div className="modal"><div className="dlg" data-export>
+      <h3>Export MP4</h3>
+      {state !== 'run' && <>
+        <label className="trow"><span>Budget</span><select value={budget} onChange={(e) => setBudget(e.target.value)} data-budget>
+          <option value="fast">Fast (all cores)</option><option value="balanced">Balanced (2 cores free)</option><option value="background">Background (half the cores)</option></select></label>
         <details open={adv} onToggle={(e) => setAdv((e.target as HTMLDetailsElement).open)} data-advanced>
           <summary>Advanced</summary>
-          <label className="trow">Encoder <select value={encoder} onChange={(e) => setEncoder(e.target.value)} data-encoder>
-            <option value="auto">Auto (GPU if available)</option><option value="gpu">GPU (NVENC)</option><option value="cpu">CPU (libx264)</option></select></label>
+          <label className="trow"><span>Encoder</span><select value={encoder} onChange={(e) => setEncoder(e.target.value)} data-encoder>
+            <option value="auto">Auto</option><option value="gpu">GPU (NVENC)</option><option value="cpu">CPU (libx264)</option></select></label>
         </details>
-      </div>}
-      {state === 'run' && <><progress value={p} max={1} style={{ width: '100%' }} /><div>{Math.round(p * 100)}% · {budget} · encoder {encoder === 'auto' ? 'auto' : encoder === 'gpu' ? 'h264_nvenc' : 'libx264'}</div><button onClick={() => window.api.cancelExport()}>Cancel</button></>}
-      {state !== 'run' && <pre className="msg">{msg}</pre>}
+      </>}
+      {state === 'run' && <><progress value={p} max={1} style={{ width: '100%' }} /><div className="hint">{Math.round(p * 100)}% · {used || '…'}</div></>}
+      {state !== 'run' && msg && <pre className="msg">{msg}</pre>}
       <div className="row">
-        {state !== 'run' && <button className="primary" onClick={go}>{state === 'idle' ? 'Choose file and export…' : 'Export again…'}</button>}
+        {state === 'run' && <button onClick={() => window.api.cancelExport()}>Cancel</button>}
+        {state !== 'run' && <button className="primary" onClick={go}>Export…</button>}
         {state !== 'run' && <button onClick={onClose}>Close</button>}
       </div>
     </div></div>

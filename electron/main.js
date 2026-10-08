@@ -101,7 +101,9 @@ ipcMain.handle('open-project', async (_e, p) => {
   return { path: p, data: JSON.parse(fs.readFileSync(p, 'utf8')) }
 })
 ipcMain.handle('export-dialog', async () => {
-  const r = await dialog.showSaveDialog({ title: 'Export MP4', defaultPath: 'export.mp4', filters: [{ name: 'MP4 video', extensions: ['mp4'] }] })
+  const dir = process.env.OVE_EXPORT_DIR || 'D:\\Open Video Editor Videos'
+  try { fs.mkdirSync(dir, { recursive: true }) } catch {}
+  const r = await dialog.showSaveDialog({ title: 'Export MP4', defaultPath: path.join(dir, 'export.mp4'), filters: [{ name: 'MP4 video', extensions: ['mp4'] }] })
   return r.canceled ? null : r.filePath
 })
 
@@ -110,7 +112,7 @@ ipcMain.handle('export-cancel', () => { if (exportCtl) { exportCtl.cancelled = t
 ipcMain.handle('export', async (e, project, out, o = {}) => {
   const ctl = (exportCtl = { cancelled: false, proc: null })
   try {
-    return await runExport(project, out, { ffmpeg: FFMPEG, cacheDir: CACHE, budget: o.budget, encoder: o.encoder, ctl, onProgress: (v) => e.sender.send('export-progress', v) })
+    return await runExport(project, out, { ffmpeg: FFMPEG, cacheDir: CACHE, budget: o.budget, encoder: o.encoder, ctl, onProgress: (v) => e.sender.send('export-progress', v), onInfo: (v) => e.sender.send('export-info', v) })
   } finally { exportCtl = null }
 })
 function cacheInfo() {
