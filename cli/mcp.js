@@ -4,7 +4,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { spawn } from 'node:child_process'
+import { spawn, execFile, execFileSync } from 'node:child_process'
 import { z } from 'zod'
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
@@ -99,9 +99,18 @@ async function imagesFor(cmd, json) {
 }
 
 // ---- app channel ----
-const appFile = () => path.join(cacheDir(), 'app.json')
+// Under WSL the app is the Windows Electron build in WIN_APP (default D:\ove-test, synced by test/deploy.sh); its control port is Windows loopback, which NAT-mode WSL cannot reach, so calls go through powershell.exe.
+const isWsl = process.platform === 'linux' && !!process.env.WSL_DISTRO_NAME
+const WIN_APP = process.env.OVE_WIN_APP || 'D:\\ove-test'
+const appFile = () => (isWsl ? path.join(toLocal(WIN_APP), 'cache', 'ove', 'app.json') : path.join(cacheDir(), 'app.json'))
+const toWin = (p) => (isWsl ? execFileSync('wslpath', ['-w', p]).toString().trim() : p)
 async function appCall(name, body = {}, timeout = 15000) {
   let info; try { info = JSON.parse(fs.readFileSync(appFile(), 'utf8')) } catch { return null }
+  if (isWsl) {
+    const ps = "$ProgressPreference='SilentlyContinue'; try { (Invoke-WebRequest -UseBasicParsing -Method Post -Uri ('http://127.0.0.1:'+$env:OVE_P+'/'+$env:OVE_N) -Headers @{Authorization='Bearer '+$env:OVE_T} -Body $env:OVE_B -TimeoutSec ([int]$env:OVE_S)).Content } catch { if ($_.Exception.Response) { exit 3 } else { exit 2 } }"
+    const env = { ...process.env, OVE_P: String(info.port), OVE_N: name, OVE_T: info.token, OVE_B: JSON.stringify(body), OVE_S: String(Math.ceil(timeout / 1000)), WSLENV: 'OVE_P:OVE_N:OVE_T:OVE_B:OVE_S' }
+    return await new Promise((resolve) => execFile('powershell.exe', ['-NoProfile', '-Command', ps], { env, timeout: timeout + 5000, maxBuffer: 64 * 1024 * 1024 }, (e, out) => { try { resolve(JSON.parse(out)) } catch { resolve(null) } }))
+  }
   try {
     const res = await fetch(`http://127.0.0.1:${info.port}/${name}`, { method: 'POST', headers: { authorization: 'Bearer ' + info.token }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeout) })
     return await res.json()
@@ -109,6 +118,13 @@ async function appCall(name, body = {}, timeout = 15000) {
 }
 async function appLaunch() {
   if (await appCall('ping', {}, 1500)) return { ok: 1 }
+  if (isWsl) {
+    if (!fs.existsSync(path.join(toLocal(WIN_APP), 'node_modules', 'electron', 'dist', 'electron.exe'))) return { err: 'no Windows app in ' + WIN_APP + ' (run test/deploy.sh)' }
+    execFile('powershell.exe', ['-NoProfile', '-Command', `Start-Process -FilePath '${WIN_APP}\\node_modules\\electron\\dist\\electron.exe' -ArgumentList '${WIN_APP}' -WorkingDirectory '${WIN_APP}'`], () => {})
+    const t1 = Date.now()
+    while (Date.now() - t1 < 60000) { await new Promise((r) => setTimeout(r, 1000)); if (await appCall('ping', {}, 3000)) return { ok: 1, launched: 1 } }
+    return { err: 'app did not start within 60 s' }
+  }
   if (process.platform !== 'win32') return { err: 'app tools need Windows node' }
   const cmd = fs.existsSync(path.join(ROOT, 'dist', 'index.html')) ? [path.join(ROOT, 'scripts', 'start.js'), '--no-build'] : [path.join(ROOT, 'scripts', 'start.js')]
   const c = spawn(process.execPath, cmd, { cwd: ROOT, detached: true, stdio: 'ignore', windowsHide: true }); c.unref()
@@ -116,15 +132,15 @@ async function appLaunch() {
   while (Date.now() - t0 < 60000) { await new Promise((r) => setTimeout(r, 1000)); if (await appCall('ping', {}, 1500)) return { ok: 1, launched: 1 } }
   return { err: 'app did not start within 60 s' }
 }
-const sameFile = (a, b) => !!a && !!b && path.resolve(String(a)).toLowerCase() === path.resolve(String(b)).toLowerCase()
+const sameFile = (a, b) => !!a && !!b && (isWsl ? String(a).toLowerCase() === String(b).toLowerCase() : path.resolve(String(a)).toLowerCase() === path.resolve(String(b)).toLowerCase())
 
 /** After a change: reload the project in the running app (if it has this project open and is clean) and park the playhead. */
 async function syncApp(cmd, a, json) {
   if (a.silent || !ctx.file) return null
   const sel = await appCall('selection', {}, 1500)
-  if (!sel || sel.err || !sameFile(sel.projectPath, ctx.file)) return null
+  if (!sel || sel.err || !sameFile(sel.projectPath, toWin(ctx.file))) return null
   if (sel.dirty) return 'app has unsaved changes, not reloaded'
-  const o = await appCall('open', { path: ctx.file })
+  const o = await appCall('open', { path: toWin(ctx.file) })
   if (!o || o.err) return o?.err || 'app reload failed'
   let t = null, clip = Array.isArray(json.c) ? json.c[0] : json.c
   if (cmd === 'cut') t = Number(a.t); else if (cmd === 'title') t = Number(a.at)
@@ -170,16 +186,16 @@ server.registerTool('project_open', { description: 'Load a .ovep as the current 
   try { loadFile(path.resolve(toLocal(a.path))); ctx.history = []; ctx.sizeLocked = false; return reply({ ok: 1, clips: ctx.proj.clips.length, media: Object.keys(ctx.proj.media).length }) } catch (e) { return reply({ err: e.message }, true) }
 }))
 
-const appErr = (r) => (r == null ? { err: process.platform === 'win32' ? 'app not reachable' : 'app tools need Windows node' } : r)
+const appErr = (r) => (r == null ? { err: 'app not reachable' } : r)
 async function withApp(fn) { const l = await appLaunch(); if (l.err) return reply(l, true); const r = appErr(await fn()); return reply(r.jpeg ? { ...r, jpeg: undefined } : { ...r, ...(l.launched ? { launched: 1 } : {}) }, !!r.err, r.jpeg ? [{ type: 'image', data: r.jpeg, mimeType: 'image/jpeg' }] : []) }
 server.registerTool('app_launch', { description: 'Start the editor app if it is not running.', inputSchema: {} }, async () => { const r = await appLaunch(); return reply(r, !!r.err) })
 server.registerTool('app_open', { description: 'Load the project in the app and park the playhead on t, else on the first cut; refuses if the app has unsaved changes.', inputSchema: { path: OPT(S), t: OPT(S) } }, (a) => serial(async () => {
   const p = a.path ? path.resolve(toLocal(a.path)) : ctx.file
   if (!p) return reply({ err: 'no project path' }, true)
-  const out = await withApp(() => appCall('open', { path: p }))
+  const out = await withApp(() => appCall('open', { path: toWin(p) }))
   if (out.isError) return out
   let t = a.t != null ? Number(a.t) : null
-  if (t == null && sameFile(p, ctx.file) && ctx.proj) { const v = ctx.proj.clips.filter((c) => c.kind === 'video' && c.trackId === 'V1').sort((x, y) => x.start - y.start); if (v.length > 1) t = v[1].start }
+  if (t == null && sameFile(toWin(p), toWin(ctx.file)) && ctx.proj) { const v = ctx.proj.clips.filter((c) => c.kind === 'video' && c.trackId === 'V1').sort((x, y) => x.start - y.start); if (v.length > 1) t = v[1].start }
   if (t != null && Number.isFinite(t)) { const j = JSON.parse(out.content[0].text); await appCall('seek', { t }); j.playhead = t; return reply(j) }
   return out
 }))
