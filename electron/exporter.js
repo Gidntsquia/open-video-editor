@@ -33,13 +33,13 @@ function windowAt(project, at) {
 
 /** Split a video clip into [head transition | plain | tail transition] segments (timeline-relative to the clip). */
 function segmentsOf(c) {
-  if (c._fx) return [{ t0: 0, t1: c.dur, fx: c._fx, frame: true }]
+  if (c._fx) return [{ t0: 0, t1: c.dur, ft0: 0, ft1: c.dur, fx: c._fx, frame: true }]
   const din = Math.min(c.transition || 0, c.dur), dout = Math.min(c.transOut || 0, Math.max(0, c.dur - din))
   const out = []
   if (din > 0) { const a = activeTrans({ ...c, transOut: 0 }, 0); out.push({ t0: 0, t1: din, fx: { type: a.type, role: 'in', solo: a.solo, d: din } }) }
   if (c.dur - din - dout > 1e-6) out.push({ t0: din, t1: c.dur - dout, fx: null })
   if (dout > 0) { const a = activeTrans({ ...c, transition: 0 }, c.dur - 1e-6); out.push({ t0: c.dur - dout, t1: c.dur, fx: { type: a.type, role: 'out', solo: a.solo, d: dout } }) }
-  return out
+  return out.map((g) => ({ ft0: g.t0, ft1: g.t1, ...g }))
 }
 
 function titleAlpha(c) {
@@ -61,11 +61,12 @@ function titleAlpha(c) {
 }
 
 /** Emit the filters for one segment of clip c (placement pl, input k). Returns the new base label. */
-function segmentChain(chains, c, pl, k, i, sg, cur, outLabel) {
+function segmentChain(chains, c, pl, k, i, sg, cur, outLabel, lo = 0) {
   const W = pl.W, H = pl.H
   const S = c.start + sg.t0, d = sg.t1 - sg.t0
+  const D = sg.ft1 - sg.ft0, off = sg.t0 - sg.ft0 // full transition length, and how far into it this (windowed) piece starts
   const lab = (x) => `[${x}]`
-  let head = `[s${k}_${i}]trim=start=${n(sg.t0)}:end=${n(sg.t1)},setpts=PTS-STARTPTS`
+  let head = `[s${k}_${i}]trim=start=${n(sg.t0 - lo)}:end=${n(sg.t1 - lo)},setpts=PTS-STARTPTS`
   if (!sg.fx) {
     chains.push(`${head},setpts=PTS+${n(S)}/TB[l${k}_${i}]`)
     chains.push(`[${cur}][l${k}_${i}]overlay=x=${pl.dx}:y=${pl.dy}:eof_action=pass:enable='between(t,${n(S)},${n(S + d)})':format=auto${lab(outLabel)}`)
@@ -75,14 +76,14 @@ function segmentChain(chains, c, pl, k, i, sg, cur, outLabel) {
   const spec = transSpec(f.type, f.role, f.solo)
   const frame = sg.frame
   const pConst = frame ? n(f.p) : null
-  const pG = pConst ?? `T/${n(d)}` // inside geq (local time T)
-  const pO = pConst ?? `(t-${n(S)})/${n(d)}` // inside overlay (timeline time t)
+  const pG = pConst ?? `(T+${n(off)})/${n(D)}` // inside geq (local time T)
+  const pO = pConst ?? `(t-${n(c.start + sg.ft0)})/${n(D)}` // inside overlay (timeline time t)
   const zoom = spec.s !== '1'
   // Zoom: pad the layer to the full frame and magnify about the layer centre with zoompan (constant frame size;
   // a per-frame `scale` changes the frame size on the fly, which overlay does not follow). zoompan: time = local
   // seconds from 0, zoom >= 1 (Cross Zoom only magnifies).
   if (zoom) {
-    const zE = `max(1,${withP(spec.s, pConst ?? `time/${n(d)}`)})`
+    const zE = `max(1,${withP(spec.s, pConst ?? `(time+${n(off)})/${n(D)}`)})`
     const cx = pl.dx + pl.dw / 2, cy = pl.dy + pl.dh / 2
     head += `,pad=${W}:${H}:${pl.dx}:${pl.dy}:color=black@0,zoompan=z='${zE}':x='${cx}*(1-1/zoom)':y='${cy}*(1-1/zoom)':d=1:fps=${pl.fps}:s=${W}x${H},format=yuva420p`
   }
@@ -129,17 +130,21 @@ export function buildExport(project, outPath, opts = {}) {
   const tmpDir = opts.tmpDir || '.'
   const tIdx = new Map(project.tracks.map((t, i) => [t.id, i]))
   const trackOf = (c) => project.tracks[tIdx.get(c.trackId)]
-  const total = Math.max(1 / fps, sequenceEnd(project.clips))
+  const win = opts.window
+  const total = win ? win.t1 - win.t0 : Math.max(1 / fps, sequenceEnd(project.clips))
   const inputs = []
   const chains = []
   const textFiles = []
 
   const vis = project.clips
     .filter((c) => (c.kind === 'video' || c.kind === 'title') && trackOf(c) && !trackOf(c).hidden)
+    .filter((c) => !win || (c.start < win.t1 - 1e-6 && c.start + c.dur > win.t0 + 1e-6))
     .sort((a, b) => tIdx.get(a.trackId) - tIdx.get(b.trackId) || a.start - b.start)
-  chains.push(`color=c=black:s=${W}x${H}:r=${fps}:d=${n(total)},format=yuv420p[b0]`)
+    .map((c) => (win ? { ...c, start: c.start - win.t0, _lo: Math.max(0, win.t0 - c.start), _hi: Math.max(0, c.start + c.dur - win.t1) } : c))
+  if (!opts.audioOnly) chains.push(`color=c=black:s=${W}x${H}:r=${fps}:d=${n(total)},format=yuv420p[b0]`)
   let cur = 'b0', bi = 0
-  for (const c of vis) {
+  for (const c of opts.audioOnly ? [] : vis) {
+    const lo = c._lo || 0, hi = c._hi || 0
     const next = `b${++bi}`
     const s = n(c.start), e = n(c.start + c.dur)
     if (c.kind === 'title') {
@@ -155,7 +160,7 @@ export function buildExport(project, outPath, opts = {}) {
       const m = project.media[c.mediaId]
       const k = inputs.length
       const sp = c.speed || 1
-      inputs.push(['-ss', n(c.in), '-t', n(c.dur * sp), '-i', m.path])
+      inputs.push(['-ss', n(c.in + lo * sp), '-t', n((c.dur - lo - hi) * sp), '-i', m.path])
       const p = { ...placement(c, m.w, m.h, W, H), W, H, fps }
       let f = `[${k}:v]setpts=(PTS-STARTPTS)/${n(sp)},fps=${fps},crop=${p.sw}:${p.sh}:${p.sx}:${p.sy},scale=${p.dw}:${p.dh}:flags=bicubic`
       if (hasColor(c)) {
@@ -168,25 +173,33 @@ export function buildExport(project, outPath, opts = {}) {
           `br=${n(a - a * sat)}:bg=${n(b - b * sat)}:bb=${n(d + (1 - d) * sat)}`
       }
       f += ',format=yuva420p'
-      const segs = segmentsOf(c)
+      const segs = segmentsOf(c).map((g) => ({ ...g, t0: Math.max(g.t0, lo), t1: Math.min(g.t1, c.dur - hi) })).filter((g) => g.t1 - g.t0 > 1e-6)
       if (segs.length === 1 && !segs[0].fx) {
-        chains.push(f + `,setpts=PTS+${s}/TB[v${k}]`)
-        chains.push(`[${cur}][v${k}]overlay=x=${p.dx}:y=${p.dy}:eof_action=pass:enable='between(t,${s},${e})':format=auto[${next}]`)
+        const s2 = n(c.start + segs[0].t0), e2 = n(c.start + segs[0].t1)
+        chains.push(f + `,setpts=PTS+${s2}/TB[v${k}]`)
+        chains.push(`[${cur}][v${k}]overlay=x=${p.dx}:y=${p.dy}:eof_action=pass:enable='between(t,${s2},${e2})':format=auto[${next}]`)
       } else {
         chains.push(f + (segs.length > 1 ? `,split=${segs.length}${segs.map((_, i) => `[s${k}_${i}]`).join('')}` : `[s${k}_0]`))
         let ci = cur
-        segs.forEach((sg, i) => { ci = segmentChain(chains, c, p, k, i, sg, ci, `${next}_${i}`) })
+        segs.forEach((sg, i) => { ci = segmentChain(chains, c, p, k, i, sg, ci, `${next}_${i}`, lo) })
         // rename the last label to `next`
         chains.push(`[${ci}]null[${next}]`)
       }
     }
     cur = next
   }
-  chains.push(`[${cur}]format=yuv420p[vout]`)
+  if (!opts.audioOnly) chains.push(`[${cur}]format=yuv420p[vout]`)
 
   if (opts.frameAt != null) {
     const script = chains.join(';\n')
     return { args: ['-y', '-hide_banner', '-nostats', ...inputs.flat(), '-filter_complex_script', opts.scriptPath || 'filter.txt', '-map', '[vout]', '-frames:v', '1', outPath], script, textFiles, total }
+  }
+  if (opts.videoOnly) {
+    const script = chains.join(';\n')
+    const enc = opts.encArgs || ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18']
+    const args = ['-y', '-hide_banner', '-nostats', '-progress', 'pipe:1', ...(opts.threads || []), ...inputs.flat(), '-filter_complex_script', opts.scriptPath || 'filter.txt',
+      '-map', '[vout]', ...enc, '-pix_fmt', 'yuv420p', '-r', String(fps), '-an', '-t', n(total), outPath]
+    return { args, script, textFiles, total }
   }
   const aud = project.clips.filter((c) => c.kind === 'audio' && trackOf(c) && !trackOf(c).muted && project.media[c.mediaId]?.hasAudio)
   chains.push(`anullsrc=r=48000:cl=stereo,atrim=duration=${n(total)},asetpts=PTS-STARTPTS[a0]`)
@@ -206,6 +219,7 @@ export function buildExport(project, outPath, opts = {}) {
   chains.push(`${labels.join('')}amix=inputs=${labels.length}:normalize=0:duration=longest,atrim=duration=${n(total)}[aout]`)
 
   const script = chains.join(';\n')
+  if (opts.audioOnly) return { args: ['-y', '-hide_banner', '-nostats', '-progress', 'pipe:1', ...(opts.threads || []), ...inputs.flat(), '-filter_complex_script', opts.scriptPath || 'filter.txt', '-map', '[aout]', '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-t', n(total), outPath], script, textFiles, total }
   const enc = opts.encArgs ? opts.encArgs : opts.nvenc
     ? ['-c:v', 'h264_nvenc', '-preset', 'p5', '-rc', 'vbr', '-cq', '19', '-b:v', '0']
     : ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18']

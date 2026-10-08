@@ -55,7 +55,7 @@ UNDERSTAND (media path or mediaId) - small bursts: scan first, then zoom with --
   Failed batch lines: remaining lines still run, a summary line lists failures; re-piping the same stdin skips finished lines.
 SELF-CHECK
   frame --at t,t                     the composed timeline frame(s) as PNG, all in one ffmpeg run (same graph as the app's export)
-  preview [-o out.mp4]               480p render of the whole timeline
+  preview [-o out.mp4] [--budget fast|balanced|background] [--encoder auto|gpu|cpu]   480p render of the whole timeline
   check                              lint: gaps, overlaps, reads past media end, missing files, muted/hidden tracks
 Export to MP4 happens in the app: open the .ovep there, review, export.`
 
@@ -322,7 +322,7 @@ async function dispatch(cmd, a) {
     case 'job': { const [id] = pos(a, 1, 'job <id> [--cancel]'); return J.view(id, !!a.flags.cancel) }
     case 'jobs': { const l = J.list(); return { n: l.length, jobs: l } }
     case 'frame': { if (!a.flags.at) fail('frame needs --at t[,t]'); return R.frame(need(), timeList(a.flags.at)) }
-    case 'preview': return R.preview(need(), a.flags.o ? path.resolve(a.flags.o) : undefined)
+    case 'preview': { const bd = String(a.flags.budgetRes ?? ''); const rb = { budget: /^(fast|balanced|background)$/.test(bd) ? bd : undefined, encoder: a.flags.encoder }; return R.preview(need(), a.flags.o ? path.resolve(a.flags.o) : undefined, rb) }
     case 'check': { const f = R.check(need()); return { findings: f } }
     default:
       if (MUT.has(cmd)) return mutate(cmd, a)
@@ -335,6 +335,8 @@ async function runOne(tokens, cli) {
   const t0 = Date.now(); const cmd = tokens[0]; const a = parseArgs(tokens.slice(1))
   const bg = !!a.flags.bg && (PROBES.has(cmd) || cmd === 'preview')
   try {
+    const resB = cmd === 'preview' && /^(fast|balanced|background)$/.test(String(a.flags.budget))
+    if (resB) a.flags.budgetRes = a.flags.budget, delete a.flags.budget
     if (a.flags.budget != null && !(Number(a.flags.budget) > 0)) fail('--budget must be a number of seconds > 0')
     setClock(a.flags.budget != null ? Number(a.flags.budget) : cmd === 'preview' || cmd === 'transcript' ? 60 : 20); clock.warn = null
     if (bg) {

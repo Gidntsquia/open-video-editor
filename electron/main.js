@@ -6,7 +6,7 @@ import fs from 'node:fs'
 import crypto from 'node:crypto'
 import { Readable } from 'node:stream'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { buildExport } from './exporter.js'
+import { runExport } from './exportrun.js'
 import { probeFile } from '../shared/probe.js'
 import { startControl } from './control.js'
 
@@ -105,34 +105,14 @@ ipcMain.handle('export-dialog', async () => {
   return r.canceled ? null : r.filePath
 })
 
-let nvencOk
-function hasNvenc() {
-  if (nvencOk === undefined) {
-    const t = spawnSync(FFMPEG, ['-hide_banner', '-f', 'lavfi', '-i', 'color=s=256x256:d=0.1', '-c:v', 'h264_nvenc', '-f', 'null', '-'], { windowsHide: true })
-    nvencOk = t.status === 0
-  }
-  return nvencOk
-}
-let exportProc = null
-ipcMain.handle('export-cancel', () => { exportProc?.kill(); return true })
-ipcMain.handle('export', (e, project, out) => new Promise((resolve, reject) => {
-  const dir = fs.mkdtempSync(path.join(CACHE, 'export-'))
-  const scriptPath = path.join(dir, 'filter.txt')
-  const b = buildExport(project, out, { tmpDir: dir, scriptPath, nvenc: hasNvenc() })
-  fs.writeFileSync(scriptPath, b.script)
-  for (const t of b.textFiles) fs.writeFileSync(t.path, t.text, 'utf8')
-  const c = (exportProc = spawn(FFMPEG, b.args, { windowsHide: true }))
-  let buf = '', err = ''
-  const done = (fn, v) => { exportProc = null; fs.rmSync(dir, { recursive: true, force: true }); fn(v) }
-  c.stdout.on('data', (d) => {
-    buf += d
-    const m = [...buf.matchAll(/out_time_us=(\d+)/g)].pop()
-    if (m) e.sender.send('export-progress', Math.min(1, Number(m[1]) / 1e6 / b.total))
-  })
-  c.stderr.on('data', (d) => (err = (err + d).slice(-1500)))
-  c.on('error', (x) => done(reject, x))
-  c.on('close', (code, sig) => (code === 0 ? done(resolve, { out, total: b.total, encoder: hasNvenc() ? 'h264_nvenc' : 'libx264' }) : done(reject, new Error(sig ? 'Cancelled' : err))))
-}))
+let exportCtl = null
+ipcMain.handle('export-cancel', () => { if (exportCtl) { exportCtl.cancelled = true; exportCtl.proc?.kill() } return true })
+ipcMain.handle('export', async (e, project, out, o = {}) => {
+  const ctl = (exportCtl = { cancelled: false, proc: null })
+  try {
+    return await runExport(project, out, { ffmpeg: FFMPEG, cacheDir: CACHE, budget: o.budget, encoder: o.encoder, ctl, onProgress: (v) => e.sender.send('export-progress', v) })
+  } finally { exportCtl = null }
+})
 function cacheInfo() {
   let size = 0
   try { for (const f of fs.readdirSync(CACHE)) { const p = path.join(CACHE, f); const s = fs.statSync(p); size += s.isDirectory() ? 0 : s.size } } catch {}

@@ -3,9 +3,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { buildExport } from '../electron/exporter.js'
+import { runExport } from '../electron/exportrun.js'
 import { sequenceEnd } from '../shared/math.js'
-import { fail, Err, cacheDir, tmpDir, enforceCache, fontDir, toLocal, r2 } from './util.js'
-import { ff, clock } from './run.js'
+import { bin, fail, Err, cacheDir, tmpDir, enforceCache, fontDir, toLocal, r2 } from './util.js'
+import { ff, clock, left } from './run.js'
 
 function localProject(p) {
   const q = structuredClone(p)
@@ -63,7 +64,7 @@ export async function frame(p, times) {
   return o
 }
 
-export async function preview(p, outPath) {
+export async function preview(p, outPath, rb = {}) {
   if (!p.clips.length) fail('timeline is empty')
   const q = localProject(p); needsMedia(q)
   const H = 480, f = H / q.height
@@ -72,8 +73,13 @@ export async function preview(p, outPath) {
   const out = outPath || path.join(cacheDir(), 'preview.mp4')
   const tmp = out + '.part.mp4'
   const encArgs = ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28']
-  let b
-  try { b = await runBuild(q, tmp, { encArgs }); fs.renameSync(tmp, out) } catch (e) { fs.rmSync(tmp, { force: true }); throw e }
+  const b = {}
+  const ctl = { cancelled: false, proc: null }
+  const timer = setInterval(() => { if (left() < 0) { ctl.cancelled = true; ctl.proc?.kill() } }, 200)
+  try {
+    const r = await runExport(q, out, { ffmpeg: bin().ffmpeg, cacheDir: cacheDir(), fontDir: fontDir(), budget: rb.budget, encoder: rb.encoder, encArgs, ctl, onProgress: (v) => clock.onPct?.(v, v * sequenceEnd(q.clips)) })
+    b.total = r.total
+  } catch (e) { if (e.cancelled) throw new Err(`preview stopped at the ${clock.budget}s time budget; rerun with --bg or a larger --budget`); throw new Err(String(e.message).split('\n')[0] + (e.log ? ` (log ${e.log})` : '')) } finally { clearInterval(timer) }
   enforceCache()
   return { ok: 1, f: out, dur: r2(b.total), w: q.width, h: q.height }
 }

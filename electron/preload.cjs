@@ -9,7 +9,7 @@ contextBridge.exposeInMainWorld('api', {
   saveProject: (data, p) => ipcRenderer.invoke('save-project', data, p),
   openProject: (p) => ipcRenderer.invoke('open-project', p),
   exportDialog: () => ipcRenderer.invoke('export-dialog'),
-  exportProject: (project, out) => ipcRenderer.invoke('export', project, out),
+  exportProject: (project, out, opts) => ipcRenderer.invoke('export', project, out, opts),
   cancelExport: () => ipcRenderer.invoke('export-cancel'),
   onExportProgress: (cb) => ipcRenderer.on('export-progress', (_e, v) => cb(v)),
   cacheInfo: () => ipcRenderer.invoke('cache-info'),
