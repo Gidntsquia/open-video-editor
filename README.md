@@ -13,8 +13,8 @@ It also ships a command-line tool, `ove`, and an MCP server, so an AI assistant 
 Requires Windows, Node 18+ and Git.
 
 ```
-git clone <this repo> video-editor
-cd video-editor
+git clone https://github.com/Gidntsquia/open-video-editor
+cd open-video-editor
 npm.cmd install   # Downloads Electron and a static ffmpeg (~250 MB)
 npm.cmd start     # Builds the UI and opens the app
 ```
@@ -45,12 +45,13 @@ npm.cmd test              # Export, CLI, transition and MCP tests (needs ffmpeg 
 
 ## Documentation 📚
 
-More details in [`docs/`](docs):
+More details in the
+[wiki](https://github.com/Gidntsquia/open-video-editor/wiki):
 
-- [Editing](docs/Editing.md) — shortcuts, bin, transitions, export settings
-- [ove CLI](docs/ove-CLI.md) — commands, batches, caching, GPU transcripts
-- [MCP Server](docs/MCP-Server.md) — Claude Code setup and app control
-- [Development](docs/Development.md) — cache, tests, install notes, credits
+- [Editing](https://github.com/Gidntsquia/open-video-editor/wiki/Editing) — shortcuts, bin, transitions, export settings
+- [ove CLI](https://github.com/Gidntsquia/open-video-editor/wiki/Ove-CLI) — commands, batches, caching, GPU transcripts
+- [MCP Server](https://github.com/Gidntsquia/open-video-editor/wiki/MCP-Server) — Claude Code setup and app control
+- [Development](https://github.com/Gidntsquia/open-video-editor/wiki/Development) — cache, tests, install notes, credits
 
 ## License 📄
 
