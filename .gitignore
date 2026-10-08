@@ -7,3 +7,6 @@ cache/
 *.mkv
 *.mov
 *.wav
+
+# GitHub wiki clone (its own repo: open-video-editor.wiki.git)
+/wiki/
