@@ -62,15 +62,20 @@ export async function runExport(project, out, opts) {
     const c = spawn(ffmpeg, args, { windowsHide: true })
     ctl.proc = c
     try { os.setPriority(c.pid, bp.prio) } catch {}
-    let buf = '', err = ''
+    let buf = '', err = '', last = 0, lastAt = Date.now()
+    // ffmpeg is silent while it opens inputs; creep progress so it still moves at least every ~1 s
+    const beat = setInterval(() => {
+      if (span && Date.now() - lastAt > 900) { last = Math.min(0.95, last + 0.003); lastAt = Date.now(); report(i, last) }
+    }, 1000)
     c.stdout.on('data', (d) => {
       buf = (buf + d).slice(-4000)
       const m = [...buf.matchAll(/out_time_us=(\d+)/g)].pop()
-      if (m && span) report(i, Math.min(1, Number(m[1]) / 1e6 / span))
+      if (m && span) { const f = Math.min(1, Number(m[1]) / 1e6 / span); if (f > last) { last = f; lastAt = Date.now(); report(i, f) } }
     })
     c.stderr.on('data', (d) => { err += d; if (err.length > 4e6) err = err.slice(-2e6) })
-    c.on('error', (x) => { log += `spawn error: ${x.message}\n`; reject(x) })
+    c.on('error', (x) => { clearInterval(beat); log += `spawn error: ${x.message}\n`; reject(x) })
     c.on('close', (code) => {
+      clearInterval(beat)
       ctl.proc = null
       log += err
       if (ctl.cancelled) return reject(Object.assign(new Error('Cancelled'), { cancelled: true }))
