@@ -5,8 +5,8 @@ const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json()
 const ws = new WebSocket(targets.find((t) => t.type === 'page').webSocketDebuggerUrl)
 await new Promise((r) => (ws.onopen = r))
 let id = 0; const pend = new Map()
-ws.onmessage = (m) => { const d = JSON.parse(m.data); if (d.id && pend.has(d.id)) { pend.get(d.id)(d); pend.delete(d.id) } }
-const send = (method, params = {}) => new Promise((r) => { const i = ++id; pend.set(i, r); ws.send(JSON.stringify({ id: i, method, params })) })
+ws.onmessage = (m) => { const d = JSON.parse(m.data); if (d.id && pend.has(d.id)) { pend.get(d.id)(d); pend.delete(d.id) } else if (d.method) globalThis.__cdpEvents?.get(d.method)?.(d.params) }
+export const send = (method, params = {}) => new Promise((r) => { const i = ++id; pend.set(i, r); ws.send(JSON.stringify({ id: i, method, params })) })
 export const ev = async (js) => { const r = await send('Runtime.evaluate', { expression: js, awaitPromise: true, returnByValue: true }); if (r.result.exceptionDetails) throw new Error(r.result.exceptionDetails.exception?.description); return r.result.result.value }
 // Keep the (inactive/hidden) window rendering so video seeks complete without stealing focus.
 await send('Emulation.setFocusEmulationEnabled', { enabled: true }); await send('Page.setWebLifecycleState', { state: 'active' }).catch(() => {})
@@ -14,7 +14,7 @@ await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 })
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 export const st = (expr) => ev(`(()=>{const s=__ove.store.getState();return JSON.stringify(${expr})})()`).then(JSON.parse)
 export const rect = (sel) => ev(`(()=>{const e=document.querySelector(${JSON.stringify(sel)});if(!e)return null;const r=e.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height}})()`)
-const mouse = (type, x, y, extra = {}) => send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, ...extra })
+export const mouse = (type, x, y, extra = {}) => send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, ...extra })
 export const move = (x, y) => send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, buttons: 0 })
 export const click = async (x, y, o = {}) => { await move(x, y); await mouse('mousePressed', x, y, o); await mouse('mouseReleased', x, y, o) }
 export const rclick = async (x, y) => { await move(x, y); await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'right', buttons: 2, clickCount: 1 }); await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'right', buttons: 0, clickCount: 1 }) }
