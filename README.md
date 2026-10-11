@@ -1,4 +1,4 @@
-# Open Video Editor 🎬
+# <img alt="Open Video Editor logo: a film-strip O with a cut mark" src="assets/icon.png" width="40" align="top"> Open Video Editor 🎬
 
 <p align="center">
   <img alt="A Smash Bros. recording being imported, dragged onto the timeline, cut with the razor, joined with a cross dissolve and sent to the Export dialog" src="docs/hero.gif">
