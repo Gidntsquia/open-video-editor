@@ -10,3 +10,6 @@ cache/
 
 # GitHub wiki clone (its own repo: open-video-editor.wiki.git)
 /wiki/
+
+# electron-builder output (npm.cmd run dist)
+/release/
