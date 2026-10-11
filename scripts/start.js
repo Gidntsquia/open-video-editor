@@ -4,9 +4,10 @@ import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { createRequire } from 'node:module'
+import { fileURLToPath } from 'node:url'
 
 const require = createRequire(import.meta.url)
-const root = path.resolve(import.meta.dirname, '..')
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const run = (cmd, args, opts = {}) => {
   const r = spawnSync(cmd, args, { stdio: 'inherit', cwd: root, shell: false, ...opts })
   if (r.status) process.exit(r.status)

@@ -22,7 +22,7 @@ IMPORTANT: the zip isn't code-signed, so Windows SmartScreen may warn on first r
 
 ## Development 🛠️
 
-Requires Node 18+ and Git.
+Requires Node 22.12+ (Electron 44 needs it to install) and Git.
 
 ```
 git clone https://github.com/Gidntsquia/open-video-editor
