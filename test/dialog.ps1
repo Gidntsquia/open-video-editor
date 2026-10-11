@@ -23,7 +23,19 @@ foreach ($id in '1001', '1148') {
 }
 if (-not $edit) { Write-Output "NO_EDIT"; exit 3 }
 Add-Type -Namespace W -Name U -MemberDefinition '[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, string l); [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);'
-[void][W.U]::SendMessage([IntPtr]$edit.Current.NativeWindowHandle, 0x000C, [IntPtr]::Zero, $Path)   # WM_SETTEXT
+Add-Type -Namespace W -Name G -MemberDefinition '[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, System.Text.StringBuilder l);'
+# Type the name as characters (WM_CHAR), not WM_SETTEXT: on a fresh profile the dialog ignores WM_SETTEXT text
+# and saves its default name. A dialog still initialising can also overwrite the name; retry until it sticks.
+$h = [IntPtr]$edit.Current.NativeWindowHandle
+for ($i = 0; $i -lt 10; $i++) {
+  [void][W.U]::SendMessage($h, 0x00B1, [IntPtr]0, [IntPtr](-1))   # EM_SETSEL all
+  [void][W.U]::SendMessage($h, 0x0102, [IntPtr]8, [IntPtr]::Zero)  # WM_CHAR backspace
+  foreach ($ch in $Path.ToCharArray()) { [void][W.U]::SendMessage($h, 0x0102, [IntPtr][int]$ch, [IntPtr]::Zero) }
+  Start-Sleep -Milliseconds 400
+  $sb = New-Object System.Text.StringBuilder 1024; [void][W.G]::SendMessage($h, 0x000D, [IntPtr]1024, $sb)   # WM_GETTEXT
+  if ($sb.ToString() -eq $Path) { break }
+}
+if ($sb.ToString() -ne $Path) { Write-Output "TEXT_NOT_SET: $($sb.ToString())"; exit 5 }
 $cond = New-Object Windows.Automation.AndCondition((New-Object Windows.Automation.PropertyCondition($A::AutomationIdProperty, '1')), (New-Object Windows.Automation.PropertyCondition($A::ClassNameProperty, 'Button')))
 $btn = $dlg.FindFirst([Windows.Automation.TreeScope]::Descendants, $cond)
 if (-not $btn) { Write-Output "NO_BUTTON"; exit 4 }
