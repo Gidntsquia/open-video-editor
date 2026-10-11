@@ -289,16 +289,17 @@ export default function App() {
     const p = await window.api.saveProject(S.serialize(), as ? null : S.projectPath)
     if (p) { useStore.setState({ projectPath: p, dirty: false }); S.setStatus('Saved ' + p) }
   }
-  const open = async () => {
+  const open = async (path: string | null = null) => {
     if (useStore.getState().dirty && !window.confirm('Discard unsaved changes and open another project?')) return
-    const r = await window.api.openProject(null); if (!r) return
+    const r = await window.api.openProject(path).catch((e: Error) => { useStore.getState().setStatus('Could not open ' + path + ': ' + e.message); return null }); if (!r) return
     engine.pause(); useStore.getState().loadProject(r.data, r.path)
     Object.values(useStore.getState().media).forEach((m) => loadAssets(m as Media))
     useStore.getState().setStatus('Opened ' + r.path)
   }
   useEffect(() => {
-    // empty launch: pre-fill the bin with a few read-only sample clips
-    window.__ove.ready = window.api.sampleClips?.().then((ps: string[]) => { if (ps.length && !Object.keys(useStore.getState().media).length && !useStore.getState().projectPath) return importPaths(ps).then(() => useStore.setState({ dirty: false, past: [] })) }).catch(() => {})
+    // launched with a .ovep (double-click, or path argument): open it; otherwise pre-fill the bin with a few read-only sample clips
+    window.api.onOpenPath?.((p: string) => open(p))
+    window.__ove.ready = (window.api.startProject?.() ?? Promise.resolve(null)).then((p: string | null) => p ? open(p) : window.api.sampleClips?.().then((ps: string[]) => { if (ps.length && !Object.keys(useStore.getState().media).length && !useStore.getState().projectPath) return importPaths(ps).then(() => useStore.setState({ dirty: false, past: [] })) })).catch(() => {})
   }, [])
   useEffect(() => {
     const name = st.projectPath ? st.projectPath.split(/[\\/]/).pop() : 'Untitled'
@@ -311,7 +312,7 @@ export default function App() {
   useEffect(() => {
     window.api.onMenu(async (m: string) => {
       if (m === 'import') importPaths(await window.api.importDialog())
-      if (m === 'open') open()
+      if (m === 'open') open(null)
       if (m === 'save') save(false)
       if (m === 'saveas') save(true)
       if (m === 'export') setShowExport(true)
@@ -381,7 +382,7 @@ export default function App() {
       <div className="toolbar">
         <button onClick={async () => importPaths(await window.api.importDialog())}>Import</button>
         <button onClick={() => save(false)}>Save</button>
-        <button onClick={open}>Open</button>
+        <button onClick={() => open(null)}>Open</button>
         <span className="sep" />
         <button className={st.tool === 'select' ? 'on' : ''} title="Selection tool (V)" onClick={() => st.setTool('select')}>V Select</button>
         <button className={st.tool === 'razor' ? 'on' : ''} title="Razor tool (C)" onClick={() => st.setTool('razor')}>C Razor</button>

@@ -18,5 +18,7 @@ contextBridge.exposeInMainWorld('api', {
   mediaUrl: (p) => 'media://local/' + encodeURIComponent(p),
   onMenu: (cb) => ipcRenderer.on('menu', (_e, v) => cb(v)),
   argv: () => ipcRenderer.invoke('argv'),
+  startProject: () => ipcRenderer.invoke('start-project'),
+  onOpenPath: (cb) => ipcRenderer.on('open-path', (_e, p) => cb(p)),
   pathForFile: (f) => webUtils.getPathForFile(f),
 })

@@ -12,6 +12,7 @@ import { runOne, ctx, HELP, MUT, loadFile } from './ove.js'
 import * as R from './render.js'
 import { ff } from './run.js'
 import { tokenize, cacheDir, enforceCache, ROOT, atomicWrite, toLocal } from './util.js'
+import { packagedDir } from '../shared/paths.js'
 import * as P from './project.js'
 
 const S = z.coerce.string(), N = z.coerce.number(), B = z.boolean()
@@ -126,6 +127,14 @@ async function appLaunch() {
     return { err: 'app did not start within 60 s' }
   }
   if (process.platform !== 'win32') return { err: 'app tools need Windows node' }
+  if (packagedDir(ROOT)) {
+    // Portable zip: this process is `Open Video Editor.exe` in Node mode; start the same exe as the app.
+    const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE
+    const c = spawn(process.execPath, [], { cwd: packagedDir(ROOT), detached: true, stdio: 'ignore', env }); c.unref()
+    const t2 = Date.now()
+    while (Date.now() - t2 < 60000) { await new Promise((r) => setTimeout(r, 1000)); if (await appCall('ping', {}, 1500)) return { ok: 1, launched: 1 } }
+    return { err: 'app did not start within 60 s' }
+  }
   const cmd = fs.existsSync(path.join(ROOT, 'dist', 'index.html')) ? [path.join(ROOT, 'scripts', 'start.js'), '--no-build'] : [path.join(ROOT, 'scripts', 'start.js')]
   const c = spawn(process.execPath, cmd, { cwd: ROOT, detached: true, stdio: 'ignore', windowsHide: true }); c.unref()
   const t0 = Date.now()

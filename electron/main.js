@@ -9,15 +9,17 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { runExport } from './exportrun.js'
 import { probeFile } from '../shared/probe.js'
 import { startControl } from './control.js'
+import { cacheRoot, packagedDir, unpacked } from '../shared/paths.js'
 
 const require = createRequire(import.meta.url)
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.join(here, '..')
-const unpack = (p) => (p ? p.replace('app.asar', 'app.asar.unpacked') : p)
-const FFMPEG = process.env.FFMPEG_BIN || unpack(require('ffmpeg-static'))
-const FFPROBE = process.env.FFPROBE_BIN || unpack(require('ffprobe-static').path)
+const FFMPEG = process.env.FFMPEG_BIN || unpacked(require('ffmpeg-static'))
+const FFPROBE = process.env.FFPROBE_BIN || unpacked(require('ffprobe-static').path)
 // All caches (thumbnails, waveforms, proxies, export temp) live here, capped and clearable from the app.
-const CACHE = process.env.OVE_CACHE || path.join(root, 'cache')
+// Source checkout: <repo>/cache. Portable zip: cache/ next to the exe (see shared/paths.js).
+const CACHE = cacheRoot(root)
+const ICON = path.join(root, 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon.png')
 const CACHE_LIMIT = 2 * 1024 ** 3
 fs.mkdirSync(CACHE, { recursive: true })
 
@@ -101,7 +103,8 @@ ipcMain.handle('open-project', async (_e, p) => {
   return { path: p, data: JSON.parse(fs.readFileSync(p, 'utf8')) }
 })
 ipcMain.handle('export-dialog', async () => {
-  const dir = process.env.OVE_EXPORT_DIR || 'D:\\Open Video Editor Videos'
+  // D:\Open Video Editor Videos when a D: drive exists (the author's setup), else the user's Videos folder.
+  const dir = process.env.OVE_EXPORT_DIR || (fs.existsSync('D:\\') ? 'D:\\Open Video Editor Videos' : path.join(app.getPath('videos'), 'Open Video Editor'))
   try { fs.mkdirSync(dir, { recursive: true }) } catch {}
   const r = await dialog.showSaveDialog({ title: 'Export MP4', defaultPath: path.join(dir, 'export.mp4'), filters: [{ name: 'MP4 video', extensions: ['mp4'] }] })
   return r.canceled ? null : r.filePath
@@ -133,11 +136,14 @@ ipcMain.handle('sample-clips', () => {
     return pick.map((f) => path.join(dir, f))
   } catch { return [] }
 })
+// First .ovep on the command line (double-clicked file, `Open Video Editor.exe x.ovep`, `electron . x.ovep`).
+const ovepArg = (argv) => argv.slice(1).find((a) => /\.ovep$/i.test(a) && fs.existsSync(a)) || null
 ipcMain.handle('argv', () => process.argv)
+ipcMain.handle('start-project', () => ovepArg(process.argv))
 
 function createWindow() {
   const win = new BrowserWindow({
-    show: !process.env.OVE_INACTIVE, width: 1600, height: 950, backgroundColor: '#1b1b1f', title: 'Open Video Editor',
+    show: !process.env.OVE_INACTIVE, width: 1600, height: 950, backgroundColor: '#1b1b1f', title: 'Open Video Editor', icon: ICON,
     webPreferences: { preload: path.join(here, 'preload.cjs'), contextIsolation: true, sandbox: false, autoplayPolicy: 'no-user-gesture-required', backgroundThrottling: false },
   })
   Menu.setApplicationMenu(Menu.buildFromTemplate([
@@ -160,6 +166,18 @@ function createWindow() {
   return win
 }
 
+// One window: a second launch (e.g. double-clicking another .ovep) hands its file to the running app.
+if (!process.env.OVE_MULTI && !app.requestSingleInstanceLock()) app.exit(0)
+let mainWin = null
+app.on('second-instance', (_e, argv) => {
+  if (!mainWin) return
+  if (mainWin.isMinimized()) mainWin.restore()
+  if (!process.env.OVE_INACTIVE) mainWin.focus()
+  const p = ovepArg(argv)
+  if (p) mainWin.webContents.send('open-path', p)
+})
+if (process.platform === 'win32') app.setAppUserModelId('com.gidntsquia.open-video-editor')
+
 app.whenReady().then(() => {
   // Serve media with explicit Range support so <video> is always seekable (net.fetch(file://) sometimes answered a cold first request without it).
   const MIME = { '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/mp4', '.mkv': 'video/x-matroska', '.webm': 'video/webm', '.wav': 'audio/wav', '.mp3': 'audio/mpeg' }
@@ -181,7 +199,7 @@ app.whenReady().then(() => {
     const stream = fs.createReadStream(p, { start, end })
     return new Response(Readable.toWeb(stream), { status, headers: h })
   })
-  const win = createWindow()
+  const win = (mainWin = createWindow())
   const ctl = startControl(CACHE, () => win)
   app.on('will-quit', ctl.cleanup)
 })

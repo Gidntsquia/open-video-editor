@@ -4,10 +4,11 @@ import os from 'node:os'
 import { spawn, spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
+import { cacheRoot, unpacked } from '../shared/paths.js'
 
 const require = createRequire(import.meta.url)
 export const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
-export const CACHE = path.join(process.env.OVE_CACHE || path.join(ROOT, 'cache'), 'ove')
+export const CACHE = path.join(cacheRoot(ROOT), 'ove')
 export class Err extends Error {}
 export const fail = (m) => { throw new Err(m) }
 
@@ -18,7 +19,7 @@ export function bin() {
   const pick = (env, stat, sys) => {
     if (process.env[env]) return process.env[env]
     if (process.platform === 'linux' && works(sys)) return sys // the bundled Linux ffmpeg has no drawtext
-    try { const s = stat(); if (s && fs.existsSync(s) && works(s)) return s } catch {}
+    try { const s = unpacked(stat()); if (s && fs.existsSync(s) && works(s)) return s } catch {}
     return sys
   }
   bins = {
