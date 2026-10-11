@@ -5,7 +5,7 @@
 - Must run as a native Windows app; on Windows use `npm.cmd`. WSL testing: rsync to `D:\ove-test`, run Windows node/Electron there, drive with `test/cdp.mjs` (CDP on port 9222, run from Windows node). Launch tests with `OVE_INACTIVE=1` so the window does not take focus.
 - Never write into `D:\OBS Videos` or other user files. Cache is bounded (`cache/`, 2 GB) and clearable.
 - Tests: `npm test`, `node test/sync.test.js` (system ffmpeg).
-- Mouse-driven tests: `test/deploy.sh` (WSL) then `node.exe test/run.mjs core|edit|inspector|hevc` from /mnt/d/ove-test. Timeline edits that move clips must call store `overwrite(ids)`.
+- Mouse-driven tests: `test/deploy.sh` (WSL) then `node.exe test/run.mjs core|edit|inspector|hevc` from /mnt/d/ove-test. The user's other Electron apps may hold 9222: check `Get-NetTCPConnection -LocalPort 9222` and use `PORT=9333 test/deploy.sh` + `WSLENV=PORT PORT=9333 node.exe test/run.mjs x`. deploy.sh stops only Electron under `D:\ove-test`. The single-instance lock means the packaged exe hands off to a running source app; close one first. Timeline edits that move clips must call store `overwrite(ids)`.
 
 # `ove` CLI (edit videos headlessly; the user reviews in the app)
 - `node cli/ove.js help` (or `npm.cmd run ove -- help`). One JSON line per reply; batch = one command per stdin line.
@@ -17,7 +17,7 @@
 - ove speed: ranged probes, `scan`, `--budget`, `--bg`/`job`/`jobs`, result cache + WAV + 320p all-intra proxy in `cache/ove/` (`OVE_CACHE` overrides). Code: `cli/run.js` (ffmpeg runner, budget/timeouts), `cli/cache.js`, `cli/jobs.js`, `cli/probe.js`. Debug: `OVE_DEBUG=1` logs every ffmpeg call, `OVE_NO_PROXY=1` stops proxy builds (tests).
 - GPU transcript: `cli/whisper_gpu.py` in a Windows venv (`D:\ove-whisper`: faster-whisper + nvidia-cublas-cu12 + nvidia-cudnn-cu12); `OVE_WHISPER='<venv python> <path>\cli\whisper_gpu.py --model small {wav}'`. Reads the cached 16 kHz WAV, falls back to CPU with `"warn":"cpu"`.
 - Batch: failed lines don't stop the rest; a `{"summary":1,...}` line appears only when a line failed; checkpoints in `cache/ove/batch-<hash>.json`, re-piping skips finished lines.
-- Scenario files run from `D:\ove-test`: rsync `test/` (deploy.sh does it) before `node.exe test/run.mjs x`. `trans3` needs a fresh launch (prefs across restart); `trans5` needs a fresh app (its audio tap installs once) and saves failing captures as `cache/trans5/<type>-fail-*.f32`. `transp` + `python3 test/transp_cmp.py` is the preview/export frame parity check.
+- Scenario files run from `D:\ove-test`: rsync `test/` (deploy.sh does it) before `node.exe test/run.mjs x`. `trans3` needs a fresh launch (prefs across restart); `trans5` needs a fresh app (its audio tap installs once) and saves failing captures as `cache/trans5/<type>-fail-*.f32`. `transp` + `python3 test/transp_cmp.py` is the preview/export frame parity check; since 2026-10-11 2-7 of 42 preview captures come back black at random (same on the pre-release build), so compare export frames by `framemd5` when checking export output did not change.
 
 # MCP server (`cli/mcp.js`)
 - Tool list is the `TOOLS` table in `cli/mcp.js` (tool names use `_`: `rm_transition`, `app_open`, `project_open`); it imports `runOne`/`ctx` from `cli/ove.js` (main() only runs when ove.js is the entry). One call at a time (global ffmpeg clock + project). `tools/list` must stay < 4 000 tokens (`node test/mcp.test.js` prints the size; `execution` is stripped from tools on purpose).
