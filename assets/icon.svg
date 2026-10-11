@@ -1,34 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
 <rect width="256" height="256" rx="56" fill="#1b1b1f"/>
 <circle cx="128" cy="128" r="78" fill="none" stroke="#4d8dff" stroke-width="52"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(16.36 128 128) translate(128 67)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(49.09 128 128) translate(128 67)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(81.82 128 128) translate(128 67)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(114.55 128 128) translate(128 67)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(147.27 128 128) translate(128 67)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(180.00 128 128) translate(128 67)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(212.73 128 128) translate(128 67)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(245.45 128 128) translate(128 67)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(278.18 128 128) translate(128 67)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(310.91 128 128) translate(128 67)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(343.64 128 128) translate(128 67)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(10.00 128 128) translate(128 33)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(30.00 128 128) translate(128 33)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(50.00 128 128) translate(128 33)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(70.00 128 128) translate(128 33)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(90.00 128 128) translate(128 33)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(110.00 128 128) translate(128 33)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(130.00 128 128) translate(128 33)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(150.00 128 128) translate(128 33)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(170.00 128 128) translate(128 33)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(190.00 128 128) translate(128 33)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(210.00 128 128) translate(128 33)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(230.00 128 128) translate(128 33)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(250.00 128 128) translate(128 33)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(270.00 128 128) translate(128 33)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(290.00 128 128) translate(128 33)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(310.00 128 128) translate(128 33)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(330.00 128 128) translate(128 33)"/>
-<rect x="-5.0" y="-5.0" width="10" height="10" rx="2.2" fill="#1b1b1f" transform="rotate(350.00 128 128) translate(128 33)"/>
+<rect x="-6" y="-6" width="12" height="12" rx="2.6" fill="#1b1b1f" transform="rotate(30 128 128) translate(128 67)"/>
+<rect x="-6" y="-6" width="12" height="12" rx="2.6" fill="#1b1b1f" transform="rotate(90 128 128) translate(128 67)"/>
+<rect x="-6" y="-6" width="12" height="12" rx="2.6" fill="#1b1b1f" transform="rotate(150 128 128) translate(128 67)"/>
+<rect x="-6" y="-6" width="12" height="12" rx="2.6" fill="#1b1b1f" transform="rotate(210 128 128) translate(128 67)"/>
+<rect x="-6" y="-6" width="12" height="12" rx="2.6" fill="#1b1b1f" transform="rotate(270 128 128) translate(128 67)"/>
+<rect x="-6" y="-6" width="12" height="12" rx="2.6" fill="#1b1b1f" transform="rotate(330 128 128) translate(128 67)"/>
+<rect x="-6" y="-6" width="12" height="12" rx="2.6" fill="#1b1b1f" transform="rotate(50 128 128) translate(128 33)"/>
+<rect x="-6" y="-6" width="12" height="12" rx="2.6" fill="#1b1b1f" transform="rotate(110 128 128) translate(128 33)"/>
+<rect x="-6" y="-6" width="12" height="12" rx="2.6" fill="#1b1b1f" transform="rotate(170 128 128) translate(128 33)"/>
+<rect x="-6" y="-6" width="12" height="12" rx="2.6" fill="#1b1b1f" transform="rotate(230 128 128) translate(128 33)"/>
+<rect x="-6" y="-6" width="12" height="12" rx="2.6" fill="#1b1b1f" transform="rotate(290 128 128) translate(128 33)"/>
+<rect x="-6" y="-6" width="12" height="12" rx="2.6" fill="#1b1b1f" transform="rotate(350 128 128) translate(128 33)"/>
 <line x1="153" y1="103" x2="212" y2="44" stroke="#1b1b1f" stroke-width="11" stroke-linecap="butt" transform="rotate(6 128 128)"/>
 </svg>

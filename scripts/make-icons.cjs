@@ -20,7 +20,7 @@ const pageCode = (big, small, tiny, sizes, tagline) => `(async () => {
   const c = document.createElement('canvas'); c.width = 1280; c.height = 640
   const g = c.getContext('2d'); g.fillStyle = '#1b1b1f'; g.fillRect(0, 0, 1280, 640)
   g.drawImage(B, 110, 180, 280, 280)
-  g.fillStyle = '#e6e6ea'; g.font = '600 84px "Segoe UI", sans-serif'; g.textBaseline = 'alphabetic'
+  g.fillStyle = '#e6e6ea'; g.font = '600 68px "Segoe UI", sans-serif'; g.textBaseline = 'alphabetic'
   g.fillText('Open Video Editor', 440, 318)
   g.fillStyle = '#9a9aa6'; g.font = '36px "Segoe UI", sans-serif'
   ;${JSON.stringify(tagline)}.forEach((l, i) => g.fillText(l, 444, 388 + i * 48))
